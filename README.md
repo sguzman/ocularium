@@ -2,7 +2,7 @@
 
 A local-first **Rust + egui desktop application** for discovering and eventually viewing IP cameras on your own network.
 
-> Status: **0.1.0 discovery milestone.** The first release inventories LAN devices and identifies camera candidates. It does **not** yet decode video, recover proprietary cloud streams, or verify that an accessible RTSP *video feed* exists.
+> Status: **0.1.x discovery and device inspection milestone.** The first release inventories LAN devices and identifies camera candidates. It does **not** yet decode video, recover proprietary cloud streams, or verify that an accessible RTSP *video feed* exists.
 
 ## Why
 
@@ -29,6 +29,8 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Reads limited unauthenticated HTTP headers and HTML titles from selected open local ports; no credentials, redirects, or cloud access.
 - Looks up MAC manufacturers using installed local OUI databases; locally administered/randomized addresses are labeled rather than assigned fabricated vendors.
 - Offers a **Copy report** button containing scan results and device evidence.
+- Saves optional user-authored device labels in `$XDG_DATA_HOME/ocularium/registry.json` (or `~/.local/share/ocularium/registry.json`). Labels use MAC identity where present, falling back to IP addresses; discovery results and camera credentials are **not** persisted.
+- Provides an on-demand **Inspect RTSP** button on detected port 554/8554 devices. The tool sends RTSP OPTIONS and DESCRIBE requests to `/`, reports server/authentication hints and SDP codecs if present. It never guesses stream paths or attempts credentials.
 - Displays found IPs, detected services, advertised ONVIF addresses/scopes, SSDP headers, and Linux neighbor-table MACs when available.
 - Distinguishes confirmed protocol responses from **possible camera** classifications.
 - Supports cancellation, filtering by metadata, and a copyable report. Nothing is uploaded externally.
@@ -44,11 +46,13 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 - MAC addresses are best-effort on Linux; manufacturer lookup requires an existing local vendor database, such as `/usr/share/hwdata/oui.txt`, `/usr/share/ieee-data/oui.txt`, or `/usr/share/nmap/nmap-mac-prefixes`. Missing vendor data is non-fatal. Do not install paid software.
 - mDNS can be blocked by multicast filtering or socket conflicts; scan warnings explain failures.
 - HTTP titles or RTSP port presence are only identification clues, never proof of accessible video.
-- Camera access credentials, playback, recording, snapshots, and MCP are later milestones.
+- Camera access credentials, verified playback, recording, snapshots, and MCP are later milestones.
+- Even when RTSP returns an SDP description, this is **not** proof that RTP media packets can be received or decoded.
+- RTSP inspection tests only the root (`/`) path; 404 does not mean a camera cannot stream elsewhere. No redirects or authentication attempts are performed.
 
 ## Architecture
 
-The `discovery` module performs network I/O on background threads and communicates over channels. The `app` module renders the egui interface and never blocks the UI with sockets. No server process is required.
+The `discovery`, `mdns`, and `rtsp` modules perform network I/O on background threads and communicate over channels. The `app` module renders the egui interface and never blocks the UI with sockets. No server process is required.
 
 See [ROADMAP.md](ROADMAP.md) for planned stages.
 
