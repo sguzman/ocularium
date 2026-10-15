@@ -178,6 +178,30 @@ pub fn classify(device: &Device) -> Classification {
         );
     }
 
+    // mDNS often provides useful device roles even when the hardware model
+    // is withheld. Identify advertised *services*, not physical manufacturers.
+    for (fragment, name) in [
+        ("_airplay._tcp", "AirPlay service"),
+        ("_raop._tcp", "AirPlay audio service"),
+        ("_googlecast._tcp", "Cast service"),
+        ("_workstation._tcp", "Workstation service"),
+        ("_sftp-ssh._tcp", "SFTP service"),
+        ("_ssh._tcp", "SSH service"),
+        ("_matter._udp", "Matter service"),
+        ("_matter._tcp", "Matter service"),
+    ] {
+        if let Some(service) = device.mdns_services.iter().find(|service| {
+            service.to_ascii_lowercase().contains(fragment)
+        }) {
+            return Classification::new(
+                IdentifiedEquipment,
+                name,
+                ServiceAdvertisement,
+                format!("mDNS advertises {service}. This identifies a service, not a hardware model."),
+            );
+        }
+    }
+
     // Identifiable software running on a host does not establish the hardware
     // model.  Describe it as a service, not a physical device.
     if let Some(info) = device.http.iter().find(|info| {
@@ -199,7 +223,7 @@ pub fn classify(device: &Device) -> Classification {
     if let Some(port) = device
         .open_ports
         .iter()
-        .find(|port| [554, 8554, 8899, 34567].contains(port))
+        .find(|port| [554, 8554, 8555, 10554, 8899, 34567, 37777].contains(port))
     {
         return Classification::new(
             CameraCandidate,
@@ -319,4 +343,53 @@ mod tests {
         assert_eq!(classify(&d).label, "Media server");
         assert!(!classify(&d).camera_candidate());
     }
+    #[test]
+    fn airplay_advertisement_identifies_service_not_camera() {
+        let mut d = device();
+        d.apply(Observation::Mdns {
+            names: vec![],
+            services: vec!["_airplay._tcp.local".into(), "_matter._udp.local".into()],
+            txt: vec![],
+        });
+        let c = classify(&d);
+        assert_eq!(c.label, "AirPlay service");
+        assert!(!c.camera_candidate());
+        assert!(c.reason.contains("not a hardware model"));
+    }
+
+    #[test]
+    fn workstation_service_is_not_a_camera() {
+        let mut d = device();
+        d.apply(Observation::Mdns {
+            names: vec![],
+            services: vec!["_workstation._tcp.local".into(), "_sftp-ssh._tcp.local".into()],
+            txt: vec![],
+        });
+        assert_eq!(classify(&d).label, "Workstation service");
+    }
+
+    #[test]
+    fn camera_protocol_overrides_incidental_airplay_service() {
+        let mut d = device();
+        d.apply(Observation::Mdns {
+            names: vec![],
+            services: vec!["_airplay._tcp.local".into()],
+            txt: vec![],
+        });
+        d.apply(Observation::OpenPorts {
+            ports: vec![8554], rtsp_responded: true,
+        });
+        assert_eq!(classify(&d).label, "RTSP service");
+    }
+
+    #[test]
+    fn unusual_camera_port_is_only_open_port_evidence() {
+        let mut d = device();
+        d.apply(Observation::OpenPorts {
+            ports: vec![37777], rtsp_responded: false,
+        });
+        assert_eq!(classify(&d).label, "Possible camera");
+        assert_eq!(classify(&d).level, EvidenceLevel::OpenPort);
+    }
+
 }
