@@ -21,7 +21,7 @@ impl HttpInfo {
         [self.server.as_deref(), self.realm.as_deref(), self.title.as_deref()]
             .into_iter()
             .flatten()
-            .any(|field| camera_words(field))
+            .any(camera_words)
     }
 }
 
