@@ -1,4 +1,5 @@
 mod app;
+mod classify;
 mod discovery;
 mod identify;
 mod identity;
