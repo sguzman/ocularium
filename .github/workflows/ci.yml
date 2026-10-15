@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -15,19 +15,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Native graphics dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
-      - name: Format Rust
-        run: cargo fmt --all
-      - name: Commit generated formatting
-        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
-        run: |
-          if ! git diff --quiet -- src; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add src
-            git commit -m 'style: apply rustfmt'
-            git push
-          fi
+      - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
