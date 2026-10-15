@@ -37,6 +37,9 @@ pub struct OculariumApp {
     status: String,
     registry: Registry,
     alias_edit: String,
+    rtsp_path: String,
+    rtsp_username: String,
+    rtsp_password: String,
     rtsp_receiver: Option<Receiver<RtspInspection>>,
     inspecting: Option<(Ipv4Addr, u16)>,
     inspections: BTreeMap<(Ipv4Addr, u16), RtspInspection>,
@@ -70,6 +73,9 @@ impl OculariumApp {
             status: "Ready to scan".into(),
             registry,
             alias_edit: String::new(),
+            rtsp_path: "/".into(),
+            rtsp_username: String::new(),
+            rtsp_password: String::new(),
             rtsp_receiver: None,
             inspecting: None,
             inspections: BTreeMap::new(),
@@ -84,6 +90,11 @@ impl OculariumApp {
         self.devices.clear();
         self.selected_device = None;
         self.alias_edit.clear();
+        self.rtsp_path = "/".into();
+        self.rtsp_username.clear();
+        self.rtsp_password.clear();
+        self.rtsp_receiver = None;
+        self.inspecting = None;
         self.inspections.clear();
         self.messages.clear();
         self.completed = 0;
@@ -396,6 +407,9 @@ impl OculariumApp {
                             {
                                 self.selected_device = Some(d.ip);
                                 self.alias_edit = self.registry.alias(d).unwrap_or("").to_owned();
+                                self.rtsp_path = "/".into();
+                                self.rtsp_username.clear();
+                                self.rtsp_password.clear();
                             }
                             ui.label(self.registry.alias(d).unwrap_or("-"));
                             let color = if d.is_camera_candidate() {
@@ -467,6 +481,29 @@ impl OculariumApp {
             .filter(|&&port| port == 554 || port == 8554)
             .copied()
             .collect();
+        if !rtsp_ports.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("RTSP path");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.rtsp_path)
+                        .hint_text("/ (or device-provided stream path)")
+                        .desired_width(260.0),
+                );
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Optional username");
+                ui.add(egui::TextEdit::singleline(&mut self.rtsp_username).desired_width(150.0));
+                ui.label("Password");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.rtsp_password)
+                        .password(true)
+                        .desired_width(150.0),
+                );
+            });
+            ui.label(RichText::new(
+                "Credentials are used only for this inspection, never saved or included in reports. No passwords or paths are guessed.",
+            ).small().color(MUTED));
+        }
         for port in rtsp_ports {
             ui.horizontal(|ui| {
                 if ui
@@ -476,17 +513,32 @@ impl OculariumApp {
                     )
                     .clicked()
                 {
-                    let (tx, rx) = mpsc::channel();
-                    let ip = device.ip;
-                    thread::spawn(move || {
-                        let _ = tx.send(rtsp::inspect(ip, port));
-                    });
-                    self.rtsp_receiver = Some(rx);
-                    self.inspecting = Some((ip, port));
+                    if self.rtsp_username.is_empty() != self.rtsp_password.is_empty() {
+                        self.messages.push(
+                            "Enter both username and password, or leave both blank".into(),
+                        );
+                    } else {
+                        let (tx, rx) = mpsc::channel();
+                        let ip = device.ip;
+                        let path = self.rtsp_path.clone();
+                        let credentials = if self.rtsp_username.is_empty() {
+                            None
+                        } else {
+                            Some(rtsp::Credentials {
+                                username: self.rtsp_username.clone(),
+                                password: std::mem::take(&mut self.rtsp_password),
+                            })
+                        };
+                        thread::spawn(move || {
+                            let _ = tx.send(rtsp::inspect(ip, port, path, credentials));
+                        });
+                        self.rtsp_receiver = Some(rx);
+                        self.inspecting = Some((ip, port));
+                    }
                 }
                 if self.inspecting == Some((device.ip, port)) {
                     ui.spinner();
-                    ui.label("Interrogating RTSP (no credentials)");
+                    ui.label("Interrogating RTSP (one optional Digest retry)");
                 }
             });
             if let Some(result) = self.inspections.get(&(device.ip, port)) {
