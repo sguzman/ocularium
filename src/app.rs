@@ -30,6 +30,7 @@ pub struct OculariumApp {
     receiver: Option<Receiver<Event>>,
     cancelled: Option<Arc<AtomicBool>>,
     scanning: bool,
+    deep_scanning: bool,
     completed: usize,
     total: usize,
     camera_only: bool,
@@ -67,6 +68,7 @@ impl OculariumApp {
             receiver: None,
             cancelled: None,
             scanning: false,
+            deep_scanning: false,
             completed: 0,
             total: 253,
             camera_only: false,
@@ -104,10 +106,36 @@ impl OculariumApp {
         self.total = scope.hosts_total();
         self.status = format!("Scanning {}", scope.description());
         self.scanning = true;
+        self.deep_scanning = false;
         let (tx, rx) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancelled);
         thread::spawn(move || discovery::scan(scope, tx, worker_cancel));
+        self.receiver = Some(rx);
+        self.cancelled = Some(cancelled);
+    }
+
+    fn start_deep_scan(&mut self) {
+        let Some(scope) = self.scopes.get(self.selected_scope).cloned() else {
+            return;
+        };
+        let targets: Vec<Ipv4Addr> = self.devices
+            .values()
+            .filter(|d| crate::classify::classify(d).needs_identification())
+            .map(|d| d.ip)
+            .collect();
+        if targets.is_empty() {
+            self.status = "No unidentified devices to inspect".into();
+            return;
+        }
+        self.completed = 0;
+        self.total = targets.len();
+        self.scanning = true;
+        self.deep_scanning = true;
+        let (tx, rx) = mpsc::channel();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancel = Arc::clone(&cancelled);
+        thread::spawn(move || discovery::deep_scan(scope, targets, tx, worker_cancel));
         self.receiver = Some(rx);
         self.cancelled = Some(cancelled);
     }
@@ -134,11 +162,13 @@ impl OculariumApp {
                     }
                     Ok(Event::Finished { cancelled }) => {
                         self.scanning = false;
-                        self.status = if cancelled {
-                            "Scan cancelled".into()
-                        } else {
-                            "Scan complete".into()
+                        self.status = match (self.deep_scanning, cancelled) {
+                            (true, true) => "Deep scan cancelled".into(),
+                            (true, false) => "Deep scan complete".into(),
+                            (false, true) => "Scan cancelled".into(),
+                            (false, false) => "Scan complete".into(),
                         };
+                        self.deep_scanning = false;
                         disconnected = true;
                         break;
                     }
@@ -146,7 +176,8 @@ impl OculariumApp {
                     Err(mpsc::TryRecvError::Disconnected) => {
                         disconnected = true;
                         self.scanning = false;
-                        if self.status.starts_with("Scanning") {
+                        self.deep_scanning = false;
+                        if self.status.starts_with("Scanning") || self.status.starts_with("Deep scanning") {
                             self.status = "Scan stopped unexpectedly".into();
                         }
                         break;
@@ -332,6 +363,22 @@ impl OculariumApp {
             {
                 self.start_scan();
             }
+            let unidentified = self
+                .devices.values()
+                .filter(|device| crate::classify::classify(device).needs_identification())
+                .count();
+            if ui
+                .add_enabled(
+                    !self.scanning && unidentified > 0,
+                    egui::Button::new(format!("Deep scan {unidentified} unknown")),
+                )
+                .on_hover_text(
+                    "Checks additional camera-related ports only on already-found, unidentified devices. No credentials or cloud requests.",
+                )
+                .clicked()
+            {
+                self.start_deep_scan();
+            }
             if ui
                 .add_enabled(self.scanning, egui::Button::new("Cancel"))
                 .clicked()
@@ -347,7 +394,8 @@ impl OculariumApp {
                         .desired_width(180.0)
                         .show_percentage(),
                 );
-                ui.label(format!("{}/{} addresses", self.completed, self.total));
+                let unit = if self.deep_scanning { "devices" } else { "addresses" };
+                ui.label(format!("{}/{} {unit}", self.completed, self.total));
             }
         });
     }
@@ -583,7 +631,7 @@ impl OculariumApp {
                 );
             });
             ui.label(RichText::new(
-                "Credentials are used only for this inspection, never saved or included in reports. No passwords or paths are guessed.",
+                "Optional: enter your camera's RTSP login. Leave both fields blank if you don't know it. Testing never displays video or saves credentials.",
             ).small().color(MUTED));
         }
         for port in rtsp_ports {
@@ -591,7 +639,7 @@ impl OculariumApp {
                 if ui
                     .add_enabled(
                         self.inspecting.is_none(),
-                        egui::Button::new(format!("Inspect RTSP :{port}")),
+                        egui::Button::new(format!("Test RTSP access :{port}")),
                     )
                     .clicked()
                 {
@@ -619,11 +667,23 @@ impl OculariumApp {
                 }
                 if self.inspecting == Some((device.ip, port)) {
                     ui.spinner();
-                    ui.label("Interrogating RTSP (one optional Digest retry)");
+                    ui.label("Testing RTSP access (one optional Digest attempt)");
                 }
             });
             if let Some(result) = self.inspections.get(&(device.ip, port)) {
                 ui.label(result.summary());
+                if result.describe_status == Some(401) {
+                    ui.label(
+                        RichText::new(
+                            "Access restricted: this endpoint requires authentication. A correct login may still need a device-specific stream path.",
+                        ).color(Color32::from_rgb(239, 190, 100)),
+                    );
+                } else if result.sdp_received {
+                    ui.label(
+                        RichText::new("Stream description received. Decoding and live video are not implemented yet.")
+                            .color(HIGHLIGHT),
+                    );
+                }
                 if let Some(server) = &result.server {
                     ui.label(format!("RTSP server: {server}"));
                 }
