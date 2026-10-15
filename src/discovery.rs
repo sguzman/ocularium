@@ -278,45 +278,13 @@ impl Device {
 
     /// A protocol hint, NOT proof that video is accessible.
     pub fn classification(&self) -> &'static str {
-        let advertises_video = self
-            .onvif_types
-            .iter()
-            .any(|s| s.to_ascii_lowercase().contains("networkvideotransmitter"));
-        if advertises_video {
-            "ONVIF camera"
-        } else if !self.onvif_xaddrs.is_empty() {
-            "ONVIF device"
-        } else if self.rtsp_responded {
-            "RTSP service"
-        } else if self.identities.iter().any(IdentityInfo::camera_hint) {
-            "Camera description"
-        } else if self.http.iter().any(HttpInfo::camera_hint) {
-            "Camera web interface"
-        } else if self.mdns_services.iter().any(|service| {
-            let service = service.to_ascii_lowercase();
-            service.contains("_rtsp._tcp")
-                || service.contains("_onvif._tcp")
-                || service.contains("_axis-video._tcp")
-        }) {
-            "Camera service advertised"
-        } else if self
-            .open_ports
-            .iter()
-            .any(|p| [554, 8554, 8899, 34567].contains(p))
-            || self
-                .ssdp_target
-                .as_ref()
-                .is_some_and(|s| s.to_ascii_lowercase().contains("camera"))
-        {
-            "Possible camera"
-        } else {
-            "Unidentified device"
-        }
+        crate::classify::classify(self).label
     }
 
     pub fn is_camera_candidate(&self) -> bool {
-        self.classification() != "Unidentified device"
+        crate::classify::classify(self).camera_candidate()
     }
+
 }
 
 fn merge_unique(target: &mut Vec<String>, new: Vec<String>) {
@@ -684,7 +652,7 @@ eno1 00000000 0100A8C0 0003 0 0 100 00000000 0 0 0\n";
             device_type: None,
             firmware: None,
         }));
-        assert_eq!(d.classification(), "Camera description");
+        assert_eq!(d.classification(), "Camera-described device");
     }
 
     #[test]
