@@ -54,6 +54,50 @@ impl Scope {
     }
 }
 
+/// Prefer the interface that carries the system's default route. This keeps
+/// Docker/Podman bridges out of the first position on ordinary home LANs.
+fn default_route_interface(routes: &str) -> Option<String> {
+    routes
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            if cols.len() < 8 || cols[1] != "00000000" {
+                return None;
+            }
+            let flags = u32::from_str_radix(cols[3], 16).ok()?;
+            if flags & 1 == 0 {
+                return None;
+            }
+            let metric = cols[6].parse::<u32>().ok()?;
+            Some((metric, cols[0].to_string()))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, name)| name)
+}
+
+fn interface_rank(name: &str, default_iface: Option<&str>) -> u8 {
+    if Some(name) == default_iface {
+        return 0;
+    }
+    if name.starts_with("en")
+        || name.starts_with("eth")
+        || name.starts_with("wl")
+        || name.starts_with("wlan")
+    {
+        return 1;
+    }
+    if name.starts_with("br-")
+        || name.starts_with("docker")
+        || name.starts_with("veth")
+        || name.starts_with("virbr")
+        || name.starts_with("podman")
+    {
+        return 3;
+    }
+    2
+}
+
 pub fn interfaces() -> std::io::Result<Vec<Scope>> {
     let mut found = Vec::new();
     let mut seen = HashSet::new();
@@ -75,12 +119,11 @@ pub fn interfaces() -> std::io::Result<Vec<Scope>> {
             found.push(scope);
         }
     }
+    let route = fs::read_to_string("/proc/net/route").unwrap_or_default();
+    let preferred = default_route_interface(&route);
     found.sort_by_key(|scope| {
         (
-            scope.interface.starts_with("docker")
-                || scope.interface.starts_with("veth")
-                || scope.interface.starts_with("virbr")
-                || scope.interface.starts_with("podman"),
+            interface_rank(&scope.interface, preferred.as_deref()),
             scope.interface.clone(),
         )
     });
@@ -209,12 +252,12 @@ impl Device {
         {
             "Possible camera"
         } else {
-            "Other device"
+            "Unidentified device"
         }
     }
 
     pub fn is_camera_candidate(&self) -> bool {
-        self.classification() != "Other device"
+        self.classification() != "Unidentified device"
     }
 }
 
@@ -472,7 +515,17 @@ mod tests {
         let mut device = Device::new(Ipv4Addr::new(192, 168, 1, 2));
         device.apply(parse_ssdp(response).expect("SSDP response"));
         assert_eq!(device.ssdp_server.as_deref(), Some("Device/1.0"));
-        assert_eq!(device.classification(), "Other device");
+        assert_eq!(device.classification(), "Unidentified device");
+    }
+
+    #[test]
+    fn default_route_prioritizes_primary_lan() {
+        let table = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n\
+br-abc 00000000 01001FAC 0003 0 0 250 00000000 0 0 0\n\
+eno1 00000000 0100A8C0 0003 0 0 100 00000000 0 0 0\n";
+        assert_eq!(default_route_interface(table).as_deref(), Some("eno1"));
+        assert!(interface_rank("eno1", Some("eno1")) < interface_rank("br-abc", Some("eno1")));
+        assert!(interface_rank("eno1", None) < interface_rank("br-abc", None));
     }
 
     #[test]
