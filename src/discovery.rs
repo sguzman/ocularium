@@ -27,8 +27,7 @@ const PORTS: [u16; 9] = [80, 443, 554, 8554, 8000, 8080, 8899, 5000, 34567];
 // Optional deep scan: a bounded set of alternate service ports, only on
 // already-discovered unidentified hosts, never across the whole /24.
 const DEEP_PORTS: [u16; 15] = [
-    81, 88, 90, 5001, 8001, 8081, 8088, 8090, 8443, 8555,
-    9000, 9001, 10000, 10554, 37777,
+    81, 88, 90, 5001, 8001, 8081, 8088, 8090, 8443, 8555, 9000, 9001, 10000, 10554, 37777,
 ];
 const DEEP_WORKERS: usize = 8;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(170);
@@ -626,7 +625,10 @@ pub fn deep_scan(
                 if !ports.is_empty() {
                     let _ = tx.send(Event::Found(
                         ip,
-                        Observation::OpenPorts { ports, rtsp_responded },
+                        Observation::OpenPorts {
+                            ports,
+                            rtsp_responded,
+                        },
                     ));
                 }
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -681,17 +683,23 @@ mod tests {
             local_ip: Ipv4Addr::new(192, 168, 0, 53),
             base: [192, 168, 0],
         };
-        let targets = deep_targets(&scope, vec![
-            Ipv4Addr::new(192, 168, 0, 100),
-            Ipv4Addr::new(192, 168, 0, 100),
-            Ipv4Addr::new(172, 31, 0, 2),
-            scope.local_ip,
-            Ipv4Addr::new(192, 168, 0, 103),
-        ]);
-        assert_eq!(targets.into_iter().collect::<Vec<_>>(), vec![
-            Ipv4Addr::new(192, 168, 0, 100),
-            Ipv4Addr::new(192, 168, 0, 103),
-        ]);
+        let targets = deep_targets(
+            &scope,
+            vec![
+                Ipv4Addr::new(192, 168, 0, 100),
+                Ipv4Addr::new(192, 168, 0, 100),
+                Ipv4Addr::new(172, 31, 0, 2),
+                scope.local_ip,
+                Ipv4Addr::new(192, 168, 0, 103),
+            ],
+        );
+        assert_eq!(
+            targets.into_iter().collect::<Vec<_>>(),
+            vec![
+                Ipv4Addr::new(192, 168, 0, 100),
+                Ipv4Addr::new(192, 168, 0, 103),
+            ]
+        );
     }
 
     #[test]

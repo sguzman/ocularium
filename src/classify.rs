@@ -190,14 +190,18 @@ pub fn classify(device: &Device) -> Classification {
         ("_matter._udp", "Matter service"),
         ("_matter._tcp", "Matter service"),
     ] {
-        if let Some(service) = device.mdns_services.iter().find(|service| {
-            service.to_ascii_lowercase().contains(fragment)
-        }) {
+        if let Some(service) = device
+            .mdns_services
+            .iter()
+            .find(|service| service.to_ascii_lowercase().contains(fragment))
+        {
             return Classification::new(
                 IdentifiedEquipment,
                 name,
                 ServiceAdvertisement,
-                format!("mDNS advertises {service}. This identifies a service, not a hardware model."),
+                format!(
+                    "mDNS advertises {service}. This identifies a service, not a hardware model."
+                ),
             );
         }
     }
@@ -362,7 +366,10 @@ mod tests {
         let mut d = device();
         d.apply(Observation::Mdns {
             names: vec![],
-            services: vec!["_workstation._tcp.local".into(), "_sftp-ssh._tcp.local".into()],
+            services: vec![
+                "_workstation._tcp.local".into(),
+                "_sftp-ssh._tcp.local".into(),
+            ],
             txt: vec![],
         });
         assert_eq!(classify(&d).label, "Workstation service");
@@ -377,7 +384,8 @@ mod tests {
             txt: vec![],
         });
         d.apply(Observation::OpenPorts {
-            ports: vec![8554], rtsp_responded: true,
+            ports: vec![8554],
+            rtsp_responded: true,
         });
         assert_eq!(classify(&d).label, "RTSP service");
     }
@@ -386,10 +394,10 @@ mod tests {
     fn unusual_camera_port_is_only_open_port_evidence() {
         let mut d = device();
         d.apply(Observation::OpenPorts {
-            ports: vec![37777], rtsp_responded: false,
+            ports: vec![37777],
+            rtsp_responded: false,
         });
         assert_eq!(classify(&d).label, "Possible camera");
         assert_eq!(classify(&d).level, EvidenceLevel::OpenPort);
     }
-
 }

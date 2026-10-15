@@ -119,7 +119,8 @@ impl OculariumApp {
         let Some(scope) = self.scopes.get(self.selected_scope).cloned() else {
             return;
         };
-        let targets: Vec<Ipv4Addr> = self.devices
+        let targets: Vec<Ipv4Addr> = self
+            .devices
             .values()
             .filter(|d| crate::classify::classify(d).needs_identification())
             .map(|d| d.ip)
@@ -177,7 +178,9 @@ impl OculariumApp {
                         disconnected = true;
                         self.scanning = false;
                         self.deep_scanning = false;
-                        if self.status.starts_with("Scanning") || self.status.starts_with("Deep scanning") {
+                        if self.status.starts_with("Scanning")
+                            || self.status.starts_with("Deep scanning")
+                        {
                             self.status = "Scan stopped unexpectedly".into();
                         }
                         break;
