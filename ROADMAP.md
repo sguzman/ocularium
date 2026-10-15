@@ -18,12 +18,16 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 
 ## Milestone 0.2 — Identify devices
 
-- [ ] Service fingerprinting, deeper ONVIF metadata, mDNS discovery
+- [x] Basic mDNS discovery with interface-scoped multicast
+- [x] Basic HTTP fingerprinting of selected local ports
+- [ ] Deeper HTTP/ONVIF device metadata
 - [ ] Better interface-aware multicast routing
 - [ ] Handle duplicate/multihomed device identities
-- [ ] MAC vendor OUI identification with an offline database
+- [x] Best-effort offline OUI lookup using installed hwdata/ieee-data/nmap databases
+- [ ] Bundled vendor database or guided optional package installation
 - [ ] User-controlled scan scope beyond /24, and configurable ports
-- [ ] Persistent device registry and confidence levels
+- [x] Copyable discovery report for hardware QA
+- [ ] Persistent device registry and graded evidence/confidence
 
 ## Milestone 0.3 — View
 
