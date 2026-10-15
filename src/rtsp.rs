@@ -9,7 +9,7 @@ use std::{
 const IO_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_RESPONSE: usize = 16 * 1024;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RtspInspection {
     pub ip: Ipv4Addr,
     pub port: u16,
@@ -126,7 +126,13 @@ pub fn inspect(ip: Ipv4Addr, port: u16) -> RtspInspection {
     let mut result = RtspInspection {
         ip,
         port,
-        ..Default::default()
+        options_status: None,
+        describe_status: None,
+        server: None,
+        authentication: None,
+        codecs: Vec::new(),
+        sdp_received: false,
+        message: String::new(),
     };
     match request(ip, port, "OPTIONS", 1) {
         Ok(response) => {
