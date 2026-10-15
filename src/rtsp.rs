@@ -83,7 +83,8 @@ fn request(ip: Ipv4Addr, port: u16, method: &str, seq: u8) -> Result<Response, S
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
     while data.len() < MAX_RESPONSE {
-        match stream.read(&mut chunk[..chunk.len().min(MAX_RESPONSE - data.len())]) {
+        let take = chunk.len().min(MAX_RESPONSE - data.len());
+        match stream.read(&mut chunk[..take]) {
             Ok(0) => break,
             Ok(count) => {
                 data.extend_from_slice(&chunk[..count]);
