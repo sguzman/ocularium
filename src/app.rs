@@ -370,7 +370,7 @@ impl OculariumApp {
             return;
         }
 
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .id_salt("device_list")
             .max_height(285.0)
             .show(ui, |ui| {
@@ -545,7 +545,7 @@ impl OculariumApp {
 impl eframe::App for OculariumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
-        if self.scanning {
+        if self.scanning || self.inspecting.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
