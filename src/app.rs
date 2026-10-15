@@ -12,7 +12,11 @@ use std::{
 
 use eframe::egui::{self, Color32, RichText};
 
-use crate::discovery::{self, Device, Event, Scope};
+use crate::{
+    discovery::{self, Device, Event, Scope},
+    registry::Registry,
+    rtsp::{self, RtspInspection},
+};
 
 const HIGHLIGHT: Color32 = Color32::from_rgb(91, 209, 189);
 const MUTED: Color32 = Color32::from_rgb(160, 170, 181);
@@ -31,6 +35,11 @@ pub struct OculariumApp {
     filter: String,
     messages: Vec<String>,
     status: String,
+    registry: Registry,
+    alias_edit: String,
+    rtsp_receiver: Option<Receiver<RtspInspection>>,
+    inspecting: Option<(Ipv4Addr, u16)>,
+    inspections: BTreeMap<(Ipv4Addr, u16), RtspInspection>,
 }
 
 impl OculariumApp {
@@ -40,6 +49,11 @@ impl OculariumApp {
             Ok(scopes) => (scopes, Vec::new()),
             Err(err) => (Vec::new(), vec![format!("Network interfaces: {err}")]),
         };
+        let (registry, registry_warning) = Registry::load();
+        let mut messages = messages;
+        if let Some(warning) = registry_warning {
+            messages.push(warning);
+        }
         Self {
             scopes,
             selected_scope: 0,
@@ -54,6 +68,11 @@ impl OculariumApp {
             filter: String::new(),
             messages,
             status: "Ready to scan".into(),
+            registry,
+            alias_edit: String::new(),
+            rtsp_receiver: None,
+            inspecting: None,
+            inspections: BTreeMap::new(),
         }
     }
 
@@ -64,6 +83,8 @@ impl OculariumApp {
         };
         self.devices.clear();
         self.selected_device = None;
+        self.alias_edit.clear();
+        self.inspections.clear();
         self.messages.clear();
         self.completed = 0;
         self.total = scope.hosts_total();
@@ -122,6 +143,19 @@ impl OculariumApp {
             self.receiver = None;
             self.cancelled = None;
         }
+        if let Some(rx) = self.rtsp_receiver.take() {
+            match rx.try_recv() {
+                Ok(inspection) => {
+                    self.inspecting = None;
+                    self.inspections.insert((inspection.ip, inspection.port), inspection);
+                }
+                Err(mpsc::TryRecvError::Empty) => self.rtsp_receiver = Some(rx),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.inspecting = None;
+                    self.messages.push("RTSP inspection ended unexpectedly".into());
+                }
+            }
+        }
     }
 
     fn refresh_interfaces(&mut self) {
@@ -162,6 +196,16 @@ impl OculariumApp {
                 device.open_ports,
                 device.rtsp_responded,
             );
+            if let Some(alias) = self.registry.alias(device) {
+                let _ = writeln!(report, "  User label: {alias}");
+            }
+            for info in self.inspections.values().filter(|report| report.ip == device.ip) {
+                let _ = writeln!(
+                    report,
+                    "  RTSP port {}: {} | server={:?} | codecs={:?}",
+                    info.port, info.summary(), info.server, info.codecs,
+                );
+            }
             for service in &device.mdns_services {
                 let _ = writeln!(report, "  mDNS: {service}");
             }
@@ -327,6 +371,7 @@ impl OculariumApp {
                     .spacing([22.0, 8.0])
                     .show(ui, |ui| {
                         ui.strong("IP address");
+                        ui.strong("Label");
                         ui.strong("Classification");
                         ui.strong("Ports");
                         ui.strong("MAC");
@@ -341,7 +386,9 @@ impl OculariumApp {
                                 .clicked()
                             {
                                 self.selected_device = Some(d.ip);
+                                self.alias_edit = self.registry.alias(d).unwrap_or("").to_owned();
                             }
+                            ui.label(self.registry.alias(d).unwrap_or("-"));
                             let color = if d.is_camera_candidate() {
                                 HIGHLIGHT
                             } else {
@@ -365,10 +412,10 @@ impl OculariumApp {
             });
     }
 
-    fn details_panel(&self, ui: &mut egui::Ui) {
+    fn details_panel(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Device details");
-        let Some(device) = self.selected_device.and_then(|ip| self.devices.get(&ip)) else {
+        let Some(device) = self.selected_device.and_then(|ip| self.devices.get(&ip)).cloned() else {
             ui.label(RichText::new("Select a device by clicking its IP address.").color(MUTED));
             return;
         };
@@ -376,6 +423,19 @@ impl OculariumApp {
             ui.label(RichText::new(device.ip.to_string()).monospace().strong());
             if ui.button("Copy IP").clicked() {
                 ui.ctx().copy_text(device.ip.to_string());
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label("Local label");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.alias_edit)
+                    .hint_text("e.g. Front gate or Patio"),
+            );
+            if ui.button("Save label").clicked() {
+                match self.registry.set_alias(&device, &self.alias_edit) {
+                    Ok(()) => self.status = "Device label saved locally".into(),
+                    Err(error) => self.messages.push(format!("Could not save label: {error}")),
+                }
             }
         });
         ui.label(format!("Type: {}", device.classification()));
@@ -388,6 +448,50 @@ impl OculariumApp {
             "RTSP OPTIONS answered: {} (not a verified playable stream)",
             if device.rtsp_responded { "yes" } else { "no" }
         ));
+        let rtsp_ports: Vec<u16> = device
+            .open_ports
+            .iter()
+            .filter(|&&port| port == 554 || port == 8554)
+            .copied()
+            .collect();
+        for port in rtsp_ports {
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        self.inspecting.is_none(),
+                        egui::Button::new(format!("Inspect RTSP :{port}")),
+                    )
+                    .clicked()
+                {
+                    let (tx, rx) = mpsc::channel();
+                    let ip = device.ip;
+                    thread::spawn(move || {
+                        let _ = tx.send(rtsp::inspect(ip, port));
+                    });
+                    self.rtsp_receiver = Some(rx);
+                    self.inspecting = Some((ip, port));
+                }
+                if self.inspecting == Some((device.ip, port)) {
+                    ui.spinner();
+                    ui.label("Interrogating RTSP (no credentials)");
+                }
+            });
+            if let Some(result) = self.inspections.get(&(device.ip, port)) {
+                ui.label(result.summary());
+                if let Some(server) = &result.server {
+                    ui.label(format!("RTSP server: {server}"));
+                }
+                if let Some(auth) = &result.authentication {
+                    ui.label(format!("Authentication scheme: {auth}"));
+                }
+                if !result.codecs.is_empty() {
+                    ui.label(format!("SDP codecs: {}", result.codecs.join(", ")));
+                }
+                if result.sdp_received {
+                    ui.label("SDP received; this does not confirm playable video.");
+                }
+            }
+        }
         if let Some(server) = &device.ssdp_server {
             ui.label(format!("SSDP server: {server}"));
         }
