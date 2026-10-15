@@ -34,7 +34,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 ## Milestone 0.3 — View
 
 - [ ] Local camera credential management
-- [x] Bounded unauthenticated RTSP OPTIONS and root DESCRIBE inspection, including status and SDP codec hints
+- [x] Bounded RTSP OPTIONS/DESCRIBE inspection, including user-provided stream path and optional one-shot MD5/MD5-sess Digest authentication
+- [x] Hide passwords in egui and clear them after use; never persist or export them
 - [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
 - [ ] go2rtc integration and live multi-camera viewing
 - [ ] Snapshot capture
