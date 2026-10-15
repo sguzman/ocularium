@@ -18,7 +18,7 @@ use if_addrs::{get_if_addrs, IfAddr};
 use crate::{
     identify::{self, HttpInfo, VendorRegistry},
     mdns,
-    identity::{self, AdvertisedEndpoint, IdentityInfo},
+    identity::{AdvertisedEndpoint, IdentityInfo},
 };
 
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
