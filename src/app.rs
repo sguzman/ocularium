@@ -608,7 +608,7 @@ impl OculariumApp {
         let rtsp_ports: Vec<u16> = device
             .open_ports
             .iter()
-            .filter(|&&port| port == 554 || port == 8554)
+            .filter(|&&port| [554, 8554, 8555, 10554].contains(&port))
             .copied()
             .collect();
         if !rtsp_ports.is_empty() {

@@ -306,6 +306,7 @@ pub fn inspect(
     path: String,
     credentials: Option<Credentials>,
 ) -> RtspInspection {
+    let provided_credentials = credentials.is_some();
     let mut result = RtspInspection {
         ip,
         port,
@@ -380,7 +381,9 @@ pub fn inspect(
         "SDP description received; video playback not verified".into()
     } else {
         match response.status {
-            401 => "Authentication required or supplied credentials rejected".into(),
+            401 if provided_credentials =>
+                "Authentication still required: credentials may be rejected or this path may be unauthorized".into(),
+            401 => "Authentication required; no credentials were supplied".into(),
             403 => "Stream description forbidden".into(),
             404 => "Specified path unavailable; the device may use another path".into(),
             status => format!("RTSP status {status}; no SDP description confirmed"),

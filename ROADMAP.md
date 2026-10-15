@@ -27,13 +27,15 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] Handle duplicate/multihomed device identities
 - [x] Best-effort offline OUI lookup using installed hwdata/ieee-data/nmap databases
 - [ ] Bundled vendor database or guided optional package installation
-- [ ] User-controlled scan scope beyond /24, and configurable ports
+- [x] User-triggered bounded deep scan of already-discovered unidentified hosts on 15 additional ports
+- [ ] User-controlled scan scope beyond /24 and configurable ports
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
 - [ ] Persistent historical scan inventory (without stale devices appearing online)
 - [x] Evidence-based classification: advertised gateways, media servers, printers, Calibre services, camera candidates and unidentified devices
 - [x] Explain why each classification was assigned; separate device descriptions, protocol responses, service advertisements and open-port hints
 - [x] Device inventory filters for camera candidates vs unidentified hardware (no manufacturer-based guessing)
+- [x] Conservative classification of AirPlay, Cast, workstation, SFTP and Matter advertisements from mDNS
 - [ ] Historical evidence tracking and multi-source confidence calibration
 
 ## Milestone 0.3 — View
@@ -41,6 +43,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] Local camera credential management
 - [x] Bounded RTSP OPTIONS/DESCRIBE inspection, including user-provided stream path and optional one-shot MD5/MD5-sess Digest authentication
 - [x] Hide passwords in egui and clear them after use; never persist or export them
+- [x] Replace ambiguous RTSP action label with Test RTSP access and clarify authentication failures
 - [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
 - [ ] go2rtc integration and live multi-camera viewing
 - [ ] Snapshot capture

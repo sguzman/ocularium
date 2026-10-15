@@ -25,16 +25,18 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Sends a UPnP/SSDP M-SEARCH multicast probe (UDP 1900).
 - Uses interface-bound mDNS multicast to discover advertised RTSP, ONVIF, and related services (UDP 5353).
 - Checks selected TCP service ports across the chosen local /24 using bounded workers.
+- Offers **Deep scan unknown** after a normal scan: checks 15 additional service ports only on previously discovered unidentified devices in the selected /24 (maximum 64 hosts, at most 8 concurrent workers). This is optional, cancellable, and uses no passwords or external services.
 - Performs a light RTSP OPTIONS handshake on responding RTSP ports.
 - Reads limited unauthenticated HTTP headers and HTML titles from selected open local ports; no credentials, redirects, or cloud access.
 - **Automatically enriches self-advertised device descriptions:** after network discovery, fetches a bounded number of SSDP/UPnP XML documents and ONVIF `GetDeviceInformation` SOAP responses. It extracts friendly names, manufacturers, models, device types, and firmware when freely available, and shows their source separately from the MAC vendor.
 - Looks up MAC manufacturers using installed local OUI databases; locally administered/randomized addresses are labeled rather than assigned fabricated vendors.
 - Offers a **Copy report** button containing scan results and device evidence.
 - Saves optional user-authored device labels in `$XDG_DATA_HOME/ocularium/registry.json` (or `~/.local/share/ocularium/registry.json`). Labels use MAC identity where present, falling back to IP addresses; discovery results and camera credentials are **not** persisted.
-- Provides an on-demand **Inspect RTSP** action on detected port 554/8554 devices. You can enter a specific relative RTSP path (default: `/`) and, optionally, your camera's username and password. It sends OPTIONS and DESCRIBE, handles a single RFC-style MD5/MD5-sess Digest challenge and retry, and reports response codes plus SDP codecs when advertised.
+- Provides an on-demand **Test RTSP access** action on detected RTSP ports (554/8554, and 8555/10554 if found during deep scanning). You can enter a specific relative RTSP path (default: `/`) and, optionally, your camera's username and password. It sends OPTIONS and DESCRIBE, handles a single RFC-style MD5/MD5-sess Digest challenge and retry, and reports response codes plus SDP codecs when advertised.
 - Ocularium **never guesses stream paths or passwords**. Credentials are held in memory only for the one inspection, the password field clears on submission, and neither usernames nor passwords are written into the report or registry. If a device uses a different Digest algorithm, the app reports that limitation rather than falling back to insecure Basic authentication.
 - Displays found IPs, detected services, advertised ONVIF addresses/scopes, SSDP headers, and Linux neighbor-table MACs when available.
 - Distinguishes confirmed protocol responses from **possible camera** classifications.
+- Identifies additional *advertised services*, including AirPlay, Cast, workstation, SFTP, and Matter via mDNS. These are evidence of available services, not proof of a particular device's model or exclusion of other functions.
 - Supports cancellation, filtering by metadata, and a copyable report. Nothing is uploaded externally.
 
 This is a discovery tool, **not** a vulnerability scanner: no password guessing, RTSP path brute forcing, unauthorized credential extraction, or exploitation. Scan networks you own or are authorized to administer.
@@ -48,6 +50,7 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 - Wi-Fi client isolation, mesh/router VLANs, multicast filtering, and local firewalls can hide devices.
 - Cloud-only cameras may appear as generic TCP devices or not appear at all.
 - A reachable TCP port or RTSP handshake does **not** prove a playable video stream.
+- Deep scan only checks the already-discovered unidentified hosts. It cannot discover a completely unseen, cloud-only camera on a blocked subnet; even an open unusual port remains a tentative camera hint.
 - MAC addresses are best-effort on Linux; manufacturer lookup requires an existing local vendor database, such as `/usr/share/hwdata/oui.txt`, `/usr/share/ieee-data/oui.txt`, or `/usr/share/nmap/nmap-mac-prefixes`. Missing vendor data is non-fatal. Do not install paid software.
 - mDNS can be blocked by multicast filtering or socket conflicts; scan warnings explain failures.
 - HTTP titles or RTSP port presence are only identification clues, never proof of accessible video.
