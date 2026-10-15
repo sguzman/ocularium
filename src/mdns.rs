@@ -1,12 +1,15 @@
 //! Multicast DNS service discovery on the selected IPv4 interface.
 //! Read-only service enumeration; no credentials and no external connections.
+use socket2::{Domain, Protocol, Socket, Type};
 use std::{
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
-    sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::Sender,
+    },
     time::{Duration, Instant},
 };
-use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::discovery::{Event, Observation, Scope};
 
@@ -78,7 +81,10 @@ fn read_name(packet: &[u8], cursor: &mut usize) -> Option<String> {
 }
 
 fn be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_be_bytes([*bytes.get(offset)?, *bytes.get(offset + 1)?]))
+    Some(u16::from_be_bytes([
+        *bytes.get(offset)?,
+        *bytes.get(offset + 1)?,
+    ]))
 }
 
 fn relevant_service(name: &str) -> bool {
@@ -154,7 +160,9 @@ pub fn parse_packet(packet: &[u8], origin: Ipv4Addr) -> Option<MdnsInfo> {
                     let value = String::from_utf8_lossy(&data[position..position + size]);
                     let lower = value.to_ascii_lowercase();
                     if ["model=", "manufacturer=", "product=", "name=", "md="]
-                        .iter().any(|key| lower.starts_with(key)) {
+                        .iter()
+                        .any(|key| lower.starts_with(key))
+                    {
                         push_unique(&mut info.txt, value.chars().take(140).collect());
                     }
                     position += size;

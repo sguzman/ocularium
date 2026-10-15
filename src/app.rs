@@ -146,7 +146,10 @@ impl OculariumApp {
             report,
             "Discovered: {} | Candidates: {}",
             self.devices.len(),
-            self.devices.values().filter(|d| d.is_camera_candidate()).count(),
+            self.devices
+                .values()
+                .filter(|d| d.is_camera_candidate())
+                .count(),
         );
         for device in self.devices.values() {
             let _ = writeln!(
@@ -194,7 +197,10 @@ impl OculariumApp {
             ui.label(RichText::new(format!("{candidates} camera candidates")).color(HIGHLIGHT));
             ui.separator();
             ui.label(RichText::new(&self.status).color(MUTED));
-            if ui.add_enabled(!self.devices.is_empty(), egui::Button::new("Copy report")).clicked() {
+            if ui
+                .add_enabled(!self.devices.is_empty(), egui::Button::new("Copy report"))
+                .clicked()
+            {
                 ui.ctx().copy_text(self.export_report());
             }
         });
@@ -272,12 +278,22 @@ impl OculariumApp {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
                     || d.classification().to_ascii_lowercase().contains(&needle)
-                    || d.vendor.as_deref().is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
-                    || d.mdns_names.iter().chain(d.mdns_services.iter())
+                    || d.vendor
+                        .as_deref()
+                        .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
+                    || d.mdns_names
+                        .iter()
+                        .chain(d.mdns_services.iter())
                         .any(|s| s.to_ascii_lowercase().contains(&needle))
                     || d.http.iter().any(|info| {
-                        [info.server.as_deref(), info.title.as_deref(), info.realm.as_deref()]
-                            .into_iter().flatten().any(|s| s.to_ascii_lowercase().contains(&needle))
+                        [
+                            info.server.as_deref(),
+                            info.title.as_deref(),
+                            info.realm.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|s| s.to_ascii_lowercase().contains(&needle))
                     })
                     || d.ssdp_server
                         .as_deref()

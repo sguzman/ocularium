@@ -18,10 +18,14 @@ pub struct HttpInfo {
 
 impl HttpInfo {
     pub fn camera_hint(&self) -> bool {
-        [self.server.as_deref(), self.realm.as_deref(), self.title.as_deref()]
-            .into_iter()
-            .flatten()
-            .any(camera_words)
+        [
+            self.server.as_deref(),
+            self.realm.as_deref(),
+            self.title.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(camera_words)
     }
 }
 
@@ -78,11 +82,14 @@ pub fn parse_http(response: &str, port: u16) -> Option<HttpInfo> {
     if !response.starts_with("HTTP/1.") {
         return None;
     }
-    let headers = response.split_once("\r\n\r\n").map_or(response, |(head, _)| head);
+    let headers = response
+        .split_once("\r\n\r\n")
+        .map_or(response, |(head, _)| head);
     let read_header = |key: &str| -> Option<String> {
-        headers.lines().filter_map(|line| line.split_once(':')).find_map(
-            |(name, value)| name.trim().eq_ignore_ascii_case(key).then(|| limit(value)),
-        )
+        headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find_map(|(name, value)| name.trim().eq_ignore_ascii_case(key).then(|| limit(value)))
     };
     let realm = read_header("WWW-Authenticate").and_then(|value| {
         let at = value.to_ascii_lowercase().find("realm=")?;
@@ -153,7 +160,11 @@ fn parse_vendor_line(line: &str) -> Option<(String, String)> {
     let mut fields = trimmed.split_whitespace();
     let first = fields.next()?;
     let prefix: String = first.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if prefix.len() != 6 || !first.chars().all(|c| c.is_ascii_hexdigit() || c == ':' || c == '-') {
+    if prefix.len() != 6
+        || !first
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == ':' || c == '-')
+    {
         return None;
     }
     let rest = trimmed[first.len()..].trim();

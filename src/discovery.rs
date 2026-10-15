@@ -15,7 +15,10 @@ use std::{
 
 use if_addrs::{get_if_addrs, IfAddr};
 
-use crate::{identify::{self, HttpInfo, VendorRegistry}, mdns};
+use crate::{
+    identify::{self, HttpInfo, VendorRegistry},
+    mdns,
+};
 
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
 const SSDP_MULTICAST: (&str, u16) = ("239.255.255.250", 1900);
@@ -251,7 +254,11 @@ impl Device {
                     self.http.push(info);
                 }
             }
-            Observation::Mdns { names, services, txt } => {
+            Observation::Mdns {
+                names,
+                services,
+                txt,
+            } => {
                 merge_unique(&mut self.mdns_names, names);
                 merge_unique(&mut self.mdns_services, services);
                 merge_unique(&mut self.mdns_txt, txt);
@@ -275,7 +282,8 @@ impl Device {
             "Camera web interface"
         } else if self.mdns_services.iter().any(|service| {
             let service = service.to_ascii_lowercase();
-            service.contains("_rtsp._tcp") || service.contains("_onvif._tcp")
+            service.contains("_rtsp._tcp")
+                || service.contains("_onvif._tcp")
                 || service.contains("_axis-video._tcp")
         }) {
             "Camera service advertised"
