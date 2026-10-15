@@ -341,7 +341,7 @@ impl eframe::App for OculariumApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.heading(RichText::new("OCULARIUM").color(HIGHLIGHT).size(27.0));
                 ui.label(
