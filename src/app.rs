@@ -356,10 +356,18 @@ impl OculariumApp {
         ui.horizontal(|ui| {
             ui.heading("Discovered devices");
             ui.separator();
-            if ui.checkbox(&mut self.camera_only, "Camera candidates").changed() && self.camera_only {
+            if ui
+                .checkbox(&mut self.camera_only, "Camera candidates")
+                .changed()
+                && self.camera_only
+            {
                 self.unidentified_only = false;
             }
-            if ui.checkbox(&mut self.unidentified_only, "Unidentified").changed() && self.unidentified_only {
+            if ui
+                .checkbox(&mut self.unidentified_only, "Unidentified")
+                .changed()
+                && self.unidentified_only
+            {
                 self.camera_only = false;
             }
             ui.add(
@@ -376,7 +384,10 @@ impl OculariumApp {
             .filter(|d| {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
-                    || self.registry.alias(d).is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
+                    || self
+                        .registry
+                        .alias(d)
+                        .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
                     || d.identities.iter().any(|info| {
                         [
@@ -464,7 +475,9 @@ impl OculariumApp {
                             let classified = classify::classify(d);
                             let color = match classified.category {
                                 DeviceCategory::CameraCandidate => HIGHLIGHT,
-                                DeviceCategory::IdentifiedEquipment => Color32::from_rgb(135, 174, 232),
+                                DeviceCategory::IdentifiedEquipment => {
+                                    Color32::from_rgb(135, 174, 232)
+                                }
                                 DeviceCategory::Unidentified => MUTED,
                             };
                             ui.label(RichText::new(classified.label).color(color))

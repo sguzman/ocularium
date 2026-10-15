@@ -284,7 +284,6 @@ impl Device {
     pub fn is_camera_candidate(&self) -> bool {
         crate::classify::classify(self).camera_candidate()
     }
-
 }
 
 fn merge_unique(target: &mut Vec<String>, new: Vec<String>) {
