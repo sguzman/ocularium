@@ -20,7 +20,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 
 - [x] Basic mDNS discovery with interface-scoped multicast
 - [x] Basic HTTP fingerprinting of selected local ports
-- [ ] Deeper HTTP/ONVIF device metadata
+- [x] Automatic same-host SSDP XML / ONVIF GetDeviceInformation enrichment, without credentials
+- [x] Display advertised manufacturer, model, device type and firmware separately from MAC vendor
+- [ ] Authenticate authorized ONVIF responses when the user supplies credentials, without brute forcing
 - [ ] Better interface-aware multicast routing
 - [ ] Handle duplicate/multihomed device identities
 - [x] Best-effort offline OUI lookup using installed hwdata/ieee-data/nmap databases
