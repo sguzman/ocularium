@@ -31,13 +31,18 @@ pub struct RtspInspection {
 
 impl RtspInspection {
     pub fn summary(&self) -> String {
-        let describe = self.describe_status
+        let describe = self
+            .describe_status
             .map(|status| status.to_string())
             .unwrap_or_else(|| "no response".to_owned());
-        let options = self.options_status
+        let options = self
+            .options_status
             .map(|status| status.to_string())
             .unwrap_or_else(|| "no response".to_owned());
-        format!("OPTIONS {options}; DESCRIBE {} {describe}: {}", self.path, self.message)
+        format!(
+            "OPTIONS {options}; DESCRIBE {} {describe}: {}",
+            self.path, self.message
+        )
     }
 }
 
@@ -51,10 +56,14 @@ struct Response {
 }
 
 fn header_value(headers: &str, key: &str) -> Option<String> {
-    headers.lines().filter_map(|line| line.split_once(':')).find_map(
-        |(name, value)| name.trim().eq_ignore_ascii_case(key)
-            .then(|| value.trim().chars().take(1024).collect()),
-    )
+    headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find_map(|(name, value)| {
+            name.trim()
+                .eq_ignore_ascii_case(key)
+                .then(|| value.trim().chars().take(1024).collect())
+        })
 }
 
 fn parse_response(bytes: &[u8]) -> Option<Response> {
@@ -77,7 +86,9 @@ fn parse_response(bytes: &[u8]) -> Option<Response> {
 fn valid_path(path: &str) -> bool {
     path.starts_with('/')
         && path.len() <= 256
-        && path.bytes().all(|b| b.is_ascii_graphic() && b != b'#' && b != b'@')
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_graphic() && b != b'#' && b != b'@')
 }
 
 fn request(
@@ -91,8 +102,12 @@ fn request(
     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
     let mut stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
         .map_err(|error| format!("Connect: {error}"))?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
     let uri = format!("rtsp://{ip}:{port}{path}");
     let mut packet = format!(
         "{method} {uri} RTSP/1.0\r\nCSeq: {seq}\r\nUser-Agent: Ocularium/0.1\r\nAccept: application/sdp\r\n"
@@ -103,7 +118,9 @@ fn request(
         packet.push_str("\r\n");
     }
     packet.push_str("\r\n");
-    stream.write_all(packet.as_bytes()).map_err(|e| e.to_string())?;
+    stream
+        .write_all(packet.as_bytes())
+        .map_err(|e| e.to_string())?;
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
     while data.len() < MAX_RESPONSE {
@@ -124,8 +141,12 @@ fn request(
                     }
                 }
             }
-            Err(err) if err.kind() == std::io::ErrorKind::TimedOut
-                || err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                break
+            }
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -208,7 +229,12 @@ fn digest_authorization(
         return Err("Invalid username".into());
     }
     let params = challenge_parameters(challenge)?;
-    let get = |name: &str| params.iter().find(|(key, _)| key == name).map(|(_, val)| val.as_str());
+    let get = |name: &str| {
+        params
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, val)| val.as_str())
+    };
     let realm = get("realm").ok_or("Digest challenge has no realm")?;
     let nonce = get("nonce").ok_or("Digest challenge has no nonce")?;
     let algorithm = get("algorithm").unwrap_or("MD5");
@@ -216,11 +242,18 @@ fn digest_authorization(
         return Err(format!("Unsupported Digest algorithm: {algorithm}"));
     }
     let qop = get("qop");
-    if qop.is_some_and(|list| !list.split(',').any(|part| part.trim().eq_ignore_ascii_case("auth"))) {
+    if qop.is_some_and(|list| {
+        !list
+            .split(',')
+            .any(|part| part.trim().eq_ignore_ascii_case("auth"))
+    }) {
         return Err("Server requires an unsupported Digest qop".into());
     }
     let cnonce = uuid::Uuid::new_v4().simple().to_string();
-    let ha1_initial = md5_hex(&format!("{}:{realm}:{}", credentials.username, credentials.password));
+    let ha1_initial = md5_hex(&format!(
+        "{}:{realm}:{}",
+        credentials.username, credentials.password
+    ));
     let ha1 = if algorithm.eq_ignore_ascii_case("MD5-sess") {
         md5_hex(&format!("{ha1_initial}:{nonce}:{cnonce}"))
     } else {
@@ -234,7 +267,10 @@ fn digest_authorization(
     };
     let mut value = format!(
         "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", response=\"{response}\"",
-        escape_quoted(&credentials.username), escape_quoted(realm), escape_quoted(nonce), escape_quoted(uri)
+        escape_quoted(&credentials.username),
+        escape_quoted(realm),
+        escape_quoted(nonce),
+        escape_quoted(uri)
     );
     if let Some(opaque) = get("opaque") {
         value.push_str(&format!(", opaque=\"{}\"", escape_quoted(opaque)));
@@ -283,7 +319,8 @@ pub fn inspect(
         message: String::new(),
     };
     if !valid_path(&path) {
-        result.message = "Path must start with /, contain no spaces, and be at most 256 characters".into();
+        result.message =
+            "Path must start with /, contain no spaces, and be at most 256 characters".into();
         return result;
     }
     match request(ip, port, &path, "OPTIONS", 1, None) {
@@ -312,13 +349,15 @@ pub fn inspect(
             if let Some(challenge) = &response.www_authenticate {
                 let uri = format!("rtsp://{ip}:{port}{path}");
                 match digest_authorization(challenge, &credentials, "DESCRIBE", &uri) {
-                    Ok(authorization) => match request(ip, port, &path, "DESCRIBE", 3, Some(&authorization)) {
-                        Ok(retry) => response = retry,
-                        Err(error) => {
-                            result.message = format!("Authenticated DESCRIBE failed: {error}");
-                            return result;
+                    Ok(authorization) => {
+                        match request(ip, port, &path, "DESCRIBE", 3, Some(&authorization)) {
+                            Ok(retry) => response = retry,
+                            Err(error) => {
+                                result.message = format!("Authenticated DESCRIBE failed: {error}");
+                                return result;
+                            }
                         }
-                    },
+                    }
                     Err(error) => {
                         result.message = error;
                         return result;
@@ -332,9 +371,10 @@ pub fn inspect(
         result.server = response.server;
     }
     result.sdp_received = response.status == 200
-        && response.content_type.as_deref().is_some_and(|value| {
-            value.to_ascii_lowercase().contains("application/sdp")
-        });
+        && response
+            .content_type
+            .as_deref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains("application/sdp"));
     result.message = if result.sdp_received {
         result.codecs = codecs(&response.body);
         "SDP description received; video playback not verified".into()
@@ -355,14 +395,20 @@ mod tests {
 
     #[test]
     fn challenge_parses_quoted_commas_and_opaque() {
-        let c = challenge_parameters("Digest realm=\"Cam A\", nonce=\"xyz\", qop=\"auth,auth-int\", opaque=\"abc,def\"").unwrap();
+        let c = challenge_parameters(
+            "Digest realm=\"Cam A\", nonce=\"xyz\", qop=\"auth,auth-int\", opaque=\"abc,def\"",
+        )
+        .unwrap();
         assert!(c.contains(&("qop".into(), "auth,auth-int".into())));
         assert!(c.contains(&("opaque".into(), "abc,def".into())));
     }
 
     #[test]
     fn md5_digest_matches_rfc_2617_example() {
-        let creds = Credentials { username: "Mufasa".into(), password: "Circle Of Life".into() };
+        let creds = Credentials {
+            username: "Mufasa".into(),
+            password: "Circle Of Life".into(),
+        };
         // RFC 2617 challenge example uses fixed cnonce, so test the classic
         // RFC 2069 calculation without qop to keep this deterministic.
         let header = digest_authorization(
@@ -370,7 +416,8 @@ mod tests {
             &creds,
             "GET",
             "/dir/index.html",
-        ).unwrap();
+        )
+        .unwrap();
         assert!(header.contains("Digest username=\"Mufasa\""));
         assert!(header.contains("uri=\"/dir/index.html\""));
         assert!(header.contains("response=\"670fd8c2df070c60b045671b8b24ff02\""));
@@ -380,8 +427,17 @@ mod tests {
     fn rejects_invalid_path_and_unsupported_qop() {
         assert!(!valid_path("rtsp://example.com/"));
         assert!(!valid_path("/foo\r\nInjected: yes"));
-        let creds = Credentials { username: "u".into(), password: "p".into() };
-        assert!(digest_authorization("Digest realm=\"r\", nonce=\"n\", qop=\"auth-int\"", &creds, "DESCRIBE", "/").is_err());
+        let creds = Credentials {
+            username: "u".into(),
+            password: "p".into(),
+        };
+        assert!(digest_authorization(
+            "Digest realm=\"r\", nonce=\"n\", qop=\"auth-int\"",
+            &creds,
+            "DESCRIBE",
+            "/"
+        )
+        .is_err());
     }
 
     #[test]
@@ -389,7 +445,8 @@ mod tests {
         let parsed = parse_response(b"RTSP/1.0 401 Unauthorized\r\nServer: YoTek RTSP Server 2.0\r\nWWW-Authenticate: Digest realm=\"cam\"\r\n\r\n").unwrap();
         assert_eq!(parsed.status, 401);
         assert_eq!(parsed.server.as_deref(), Some("YoTek RTSP Server 2.0"));
-        let body = "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n";
+        let body =
+            "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n";
         assert_eq!(codecs(body), ["H264", "H265"]);
     }
 }

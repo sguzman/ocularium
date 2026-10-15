@@ -514,9 +514,8 @@ impl OculariumApp {
                     .clicked()
                 {
                     if self.rtsp_username.is_empty() != self.rtsp_password.is_empty() {
-                        self.messages.push(
-                            "Enter both username and password, or leave both blank".into(),
-                        );
+                        self.messages
+                            .push("Enter both username and password, or leave both blank".into());
                     } else {
                         let (tx, rx) = mpsc::channel();
                         let ip = device.ip;
