@@ -27,12 +27,15 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] Bundled vendor database or guided optional package installation
 - [ ] User-controlled scan scope beyond /24, and configurable ports
 - [x] Copyable discovery report for hardware QA
-- [ ] Persistent device registry and graded evidence/confidence
+- [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
+- [ ] Persistent historical scan inventory (without stale devices appearing online)
+- [ ] Graded evidence/confidence
 
 ## Milestone 0.3 — View
 
 - [ ] Local camera credential management
-- [ ] RTSP URI negotiation and playable-stream validation
+- [x] Bounded unauthenticated RTSP OPTIONS and root DESCRIBE inspection, including status and SDP codec hints
+- [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
 - [ ] go2rtc integration and live multi-camera viewing
 - [ ] Snapshot capture
 - [ ] Represent cloud-only camera limitations clearly
