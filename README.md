@@ -27,6 +27,7 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Checks selected TCP service ports across the chosen local /24 using bounded workers.
 - Performs a light RTSP OPTIONS handshake on responding RTSP ports.
 - Reads limited unauthenticated HTTP headers and HTML titles from selected open local ports; no credentials, redirects, or cloud access.
+- **Automatically enriches self-advertised device descriptions:** after network discovery, fetches a bounded number of SSDP/UPnP XML documents and ONVIF `GetDeviceInformation` SOAP responses. It extracts friendly names, manufacturers, models, device types, and firmware when freely available, and shows their source separately from the MAC vendor.
 - Looks up MAC manufacturers using installed local OUI databases; locally administered/randomized addresses are labeled rather than assigned fabricated vendors.
 - Offers a **Copy report** button containing scan results and device evidence.
 - Saves optional user-authored device labels in `$XDG_DATA_HOME/ocularium/registry.json` (or `~/.local/share/ocularium/registry.json`). Labels use MAC identity where present, falling back to IP addresses; discovery results and camera credentials are **not** persisted.
@@ -41,6 +42,9 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 ### Limitations
 
 - Discovery is limited to the selected IPv4 /24, not the whole LAN or multiple VLANs.
+- Device-description requests are restricted to the exact IPv4 host that advertised the document. No DNS resolution, redirects, credentials, or cross-host HTTP requests. Only HTTP is supported for discovery enrichment; HTTPS-only descriptions are skipped rather than weakening TLS.
+- Devices may advertise no readable description at all, or may require authentication. Ocularium leaves those **Unidentified** rather than inventing a camera model.
+- At most 16 distinct advertised metadata endpoints are probed per scan with short timeouts; requests can add a few seconds after port scanning reaches 100%.
 - Wi-Fi client isolation, mesh/router VLANs, multicast filtering, and local firewalls can hide devices.
 - Cloud-only cameras may appear as generic TCP devices or not appear at all.
 - A reachable TCP port or RTSP handshake does **not** prove a playable video stream.
