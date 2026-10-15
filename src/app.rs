@@ -13,6 +13,7 @@ use std::{
 use eframe::egui::{self, Color32, RichText};
 
 use crate::{
+    classify::{self, DeviceCategory},
     discovery::{self, Device, Event, Scope},
     registry::Registry,
     rtsp::{self, RtspInspection},
@@ -32,6 +33,7 @@ pub struct OculariumApp {
     completed: usize,
     total: usize,
     camera_only: bool,
+    unidentified_only: bool,
     filter: String,
     messages: Vec<String>,
     status: String,
@@ -68,6 +70,7 @@ impl OculariumApp {
             completed: 0,
             total: 253,
             camera_only: false,
+            unidentified_only: false,
             filter: String::new(),
             messages,
             status: "Ready to scan".into(),
@@ -227,6 +230,13 @@ impl OculariumApp {
                     info.codecs,
                 );
             }
+            let classified = classify::classify(device);
+            let _ = writeln!(
+                report,
+                "  Evidence: {} - {}",
+                classified.level.label(),
+                classified.reason,
+            );
             for id in &device.identities {
                 let _ = writeln!(
                     report,
@@ -264,10 +274,20 @@ impl OculariumApp {
             .values()
             .filter(|d| d.is_camera_candidate())
             .count();
+        let unidentified = self
+            .devices
+            .values()
+            .filter(|d| classify::classify(d).needs_identification())
+            .count();
+        let equipment = self.devices.len().saturating_sub(candidates + unidentified);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{} discovered devices", self.devices.len())).strong());
             ui.separator();
             ui.label(RichText::new(format!("{candidates} camera candidates")).color(HIGHLIGHT));
+            ui.separator();
+            ui.label(format!("{equipment} identified equipment"));
+            ui.separator();
+            ui.label(format!("{unidentified} unidentified"));
             ui.separator();
             ui.label(RichText::new(&self.status).color(MUTED));
             if ui
@@ -336,9 +356,14 @@ impl OculariumApp {
         ui.horizontal(|ui| {
             ui.heading("Discovered devices");
             ui.separator();
-            ui.checkbox(&mut self.camera_only, "Camera candidates only");
+            if ui.checkbox(&mut self.camera_only, "Camera candidates").changed() && self.camera_only {
+                self.unidentified_only = false;
+            }
+            if ui.checkbox(&mut self.unidentified_only, "Unidentified").changed() && self.unidentified_only {
+                self.camera_only = false;
+            }
             ui.add(
-                egui::TextEdit::singleline(&mut self.filter).hint_text("Filter IP, service, label"),
+                egui::TextEdit::singleline(&mut self.filter).hint_text("Filter IP, model, label"),
             );
         });
         ui.separator();
@@ -347,9 +372,11 @@ impl OculariumApp {
             .devices
             .values()
             .filter(|d| !self.camera_only || d.is_camera_candidate())
+            .filter(|d| !self.unidentified_only || classify::classify(d).needs_identification())
             .filter(|d| {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
+                    || self.registry.alias(d).is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
                     || d.identities.iter().any(|info| {
                         [
@@ -413,6 +440,7 @@ impl OculariumApp {
                         ui.strong("IP address");
                         ui.strong("Label");
                         ui.strong("Classification");
+                        ui.strong("Evidence");
                         ui.strong("Ports");
                         ui.strong("MAC");
                         ui.strong("MAC vendor");
@@ -433,12 +461,16 @@ impl OculariumApp {
                                 self.rtsp_password.clear();
                             }
                             ui.label(self.registry.alias(d).unwrap_or("-"));
-                            let color = if d.is_camera_candidate() {
-                                HIGHLIGHT
-                            } else {
-                                MUTED
+                            let classified = classify::classify(d);
+                            let color = match classified.category {
+                                DeviceCategory::CameraCandidate => HIGHLIGHT,
+                                DeviceCategory::IdentifiedEquipment => Color32::from_rgb(135, 174, 232),
+                                DeviceCategory::Unidentified => MUTED,
                             };
-                            ui.label(RichText::new(d.classification()).color(color));
+                            ui.label(RichText::new(classified.label).color(color))
+                                .on_hover_text(classified.reason.as_str());
+                            ui.label(classified.level.label())
+                                .on_hover_text(classified.reason);
                             ui.label(if d.open_ports.is_empty() {
                                 "-".into()
                             } else {
@@ -494,7 +526,15 @@ impl OculariumApp {
                 }
             }
         });
-        ui.label(format!("Type: {}", device.classification()));
+        let classified = classify::classify(&device);
+        ui.label(RichText::new(format!("Classification: {}", classified.label)).strong());
+        ui.label(format!("Evidence level: {}", classified.level.label()));
+        ui.label(format!("Why: {}", classified.reason));
+        if classified.category == DeviceCategory::Unidentified {
+            ui.label(RichText::new(
+                "Device type still unknown. MAC vendor names identify networking hardware, not the camera brand.",
+            ).color(MUTED).small());
+        }
         ui.label(format!(
             "MAC: {} | Offline manufacturer lookup: {}",
             device.mac.as_deref().unwrap_or("Unknown"),
