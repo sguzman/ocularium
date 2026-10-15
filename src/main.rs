@@ -1,5 +1,7 @@
 mod app;
 mod discovery;
+mod identify;
+mod mdns;
 
 use eframe::egui;
 
