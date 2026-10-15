@@ -134,6 +134,54 @@ impl OculariumApp {
         }
     }
 
+    fn export_report(&self) -> String {
+        use std::fmt::Write as _;
+        let mut report = String::from(
+            "Ocularium LAN discovery report (device evidence only; no video verified)\n",
+        );
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            let _ = writeln!(report, "Scan scope: {}", scope.description());
+        }
+        let _ = writeln!(
+            report,
+            "Discovered: {} | Candidates: {}",
+            self.devices.len(),
+            self.devices.values().filter(|d| d.is_camera_candidate()).count(),
+        );
+        for device in self.devices.values() {
+            let _ = writeln!(
+                report,
+                "\n{} - {}\n  MAC: {}\n  Vendor: {}\n  Ports: {:?}\n  RTSP OPTIONS: {}",
+                device.ip,
+                device.classification(),
+                device.mac.as_deref().unwrap_or("-"),
+                device.vendor.as_deref().unwrap_or("Unknown"),
+                device.open_ports,
+                device.rtsp_responded,
+            );
+            for service in &device.mdns_services {
+                let _ = writeln!(report, "  mDNS: {service}");
+            }
+            for name in &device.mdns_names {
+                let _ = writeln!(report, "  Hostname: {name}");
+            }
+            for text in &device.mdns_txt {
+                let _ = writeln!(report, "  TXT: {text}");
+            }
+            for service in &device.onvif_xaddrs {
+                let _ = writeln!(report, "  ONVIF service: {service}");
+            }
+            for info in &device.http {
+                let _ = writeln!(
+                    report,
+                    "  HTTP port {}: server={:?} title={:?} realm={:?}",
+                    info.port, info.server, info.title, info.realm,
+                );
+            }
+        }
+        report
+    }
+
     fn overview(&self, ui: &mut egui::Ui) {
         let candidates = self
             .devices
@@ -146,6 +194,9 @@ impl OculariumApp {
             ui.label(RichText::new(format!("{candidates} camera candidates")).color(HIGHLIGHT));
             ui.separator();
             ui.label(RichText::new(&self.status).color(MUTED));
+            if ui.add_enabled(!self.devices.is_empty(), egui::Button::new("Copy report")).clicked() {
+                ui.ctx().copy_text(self.export_report());
+            }
         });
     }
 
@@ -221,6 +272,13 @@ impl OculariumApp {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
                     || d.classification().to_ascii_lowercase().contains(&needle)
+                    || d.vendor.as_deref().is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
+                    || d.mdns_names.iter().chain(d.mdns_services.iter())
+                        .any(|s| s.to_ascii_lowercase().contains(&needle))
+                    || d.http.iter().any(|info| {
+                        [info.server.as_deref(), info.title.as_deref(), info.realm.as_deref()]
+                            .into_iter().flatten().any(|s| s.to_ascii_lowercase().contains(&needle))
+                    })
                     || d.ssdp_server
                         .as_deref()
                         .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
@@ -256,6 +314,7 @@ impl OculariumApp {
                         ui.strong("Classification");
                         ui.strong("Ports");
                         ui.strong("MAC");
+                        ui.strong("Manufacturer");
                         ui.end_row();
                         for d in &devices {
                             if ui
@@ -283,6 +342,7 @@ impl OculariumApp {
                                     .join(", ")
                             });
                             ui.label(d.mac.as_deref().unwrap_or("-"));
+                            ui.label(d.vendor.as_deref().unwrap_or("Unknown"));
                             ui.end_row();
                         }
                     });
@@ -304,6 +364,11 @@ impl OculariumApp {
         });
         ui.label(format!("Type: {}", device.classification()));
         ui.label(format!(
+            "MAC: {} | Offline manufacturer lookup: {}",
+            device.mac.as_deref().unwrap_or("Unknown"),
+            device.vendor.as_deref().unwrap_or("Unknown"),
+        ));
+        ui.label(format!(
             "RTSP OPTIONS answered: {} (not a verified playable stream)",
             if device.rtsp_responded { "yes" } else { "no" }
         ));
@@ -316,7 +381,19 @@ impl OculariumApp {
         if let Some(location) = &device.ssdp_location {
             ui.label(format!("SSDP location: {location}"));
         }
+        for info in &device.http {
+            ui.label(format!(
+                "HTTP port {}: server={} · title={} · auth realm={}",
+                info.port,
+                info.server.as_deref().unwrap_or("-"),
+                info.title.as_deref().unwrap_or("-"),
+                info.realm.as_deref().unwrap_or("-"),
+            ));
+        }
         for (heading, values) in [
+            ("mDNS hostnames", &device.mdns_names),
+            ("mDNS services", &device.mdns_services),
+            ("mDNS device metadata", &device.mdns_txt),
             ("ONVIF device services", &device.onvif_xaddrs),
             ("ONVIF types", &device.onvif_types),
             ("ONVIF scopes", &device.onvif_scopes),
@@ -342,7 +419,7 @@ impl eframe::App for OculariumApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.vertical(|ui| {
+            egui::ScrollArea::vertical().id_salt("main_scroll").show(ui, |ui| {
                 ui.heading(RichText::new("OCULARIUM").color(HIGHLIGHT).size(27.0));
                 ui.label(
                     RichText::new("Local network discovery · Rust / egui · no server required")
