@@ -23,9 +23,12 @@ pub struct IdentityInfo {
 
 impl IdentityInfo {
     pub fn has_values(&self) -> bool {
-        self.friendly_name.is_some() || self.manufacturer.is_some()
-            || self.model.is_some() || self.model_number.is_some()
-            || self.device_type.is_some() || self.firmware.is_some()
+        self.friendly_name.is_some()
+            || self.manufacturer.is_some()
+            || self.model.is_some()
+            || self.model_number.is_some()
+            || self.device_type.is_some()
+            || self.firmware.is_some()
     }
 
     pub fn camera_hint(&self) -> bool {
@@ -34,7 +37,10 @@ impl IdentityInfo {
             self.model.as_deref(),
             self.model_number.as_deref(),
             self.device_type.as_deref(),
-        ].into_iter().flatten().any(crate::identify::camera_words)
+        ]
+        .into_iter()
+        .flatten()
+        .any(crate::identify::camera_words)
     }
 }
 
@@ -76,8 +82,10 @@ fn endpoint(ip: Ipv4Addr, advertised: &str) -> Option<LocalEndpoint> {
         return None;
     }
     let path = format!("/{tail}");
-    if path.len() > 512 || !path.bytes().all(|byte| byte.is_ascii_graphic()
-        && byte != b'#' && byte != b'?' && byte != b'\\')
+    if path.len() > 512
+        || !path
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'#' && byte != b'?' && byte != b'\\')
     {
         return None;
     }
@@ -107,7 +115,14 @@ fn request(target: &LocalEndpoint, soap: Option<&str>) -> Option<String> {
         match stream.read(&mut chunk[..size]) {
             Ok(0) => break,
             Ok(len) => data.extend_from_slice(&chunk[..len]),
-            Err(err) if matches!(err.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => break,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                break
+            }
             Err(_) => return None,
         }
     }
@@ -119,15 +134,18 @@ fn request(target: &LocalEndpoint, soap: Option<&str>) -> Option<String> {
     }
     // HTTP/1.1 Transfer-Encoding: chunked is not implemented and cannot
     // be safely passed directly to XML. Ignore it rather than misparse.
-    if headers.lines().any(|line| line.to_ascii_lowercase().starts_with("transfer-encoding:")
-        && line.to_ascii_lowercase().contains("chunked"))
-    {
+    if headers.lines().any(|line| {
+        line.to_ascii_lowercase().starts_with("transfer-encoding:")
+            && line.to_ascii_lowercase().contains("chunked")
+    }) {
         return None;
     }
     let declared = headers.lines().find_map(|line| {
         let (name, value) = line.split_once(':')?;
-        name.trim().eq_ignore_ascii_case("content-length")
-            .then(|| value.trim().parse::<usize>().ok()).flatten()
+        name.trim()
+            .eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
     });
     if declared.is_some_and(|expected| expected > body.len()) {
         return None;
@@ -136,8 +154,10 @@ fn request(target: &LocalEndpoint, soap: Option<&str>) -> Option<String> {
 }
 
 fn field(parent: roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
-    let raw = parent.children().find(|node| node.is_element()
-        && node.tag_name().name().eq_ignore_ascii_case(name))?.text()?;
+    let raw = parent
+        .children()
+        .find(|node| node.is_element() && node.tag_name().name().eq_ignore_ascii_case(name))?
+        .text()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         None
@@ -148,8 +168,9 @@ fn field(parent: roxmltree::Node<'_, '_>, name: &str) -> Option<String> {
 
 pub fn parse_ssdp_xml(xml: &str) -> Option<IdentityInfo> {
     let doc = roxmltree::Document::parse(xml).ok()?;
-    let device = doc.descendants().find(|node| node.is_element()
-        && node.tag_name().name() == "device")?;
+    let device = doc
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "device")?;
     let info = IdentityInfo {
         source: "UPnP/SSDP",
         friendly_name: field(device, "friendlyName"),
@@ -164,8 +185,9 @@ pub fn parse_ssdp_xml(xml: &str) -> Option<IdentityInfo> {
 
 pub fn parse_onvif_xml(xml: &str) -> Option<IdentityInfo> {
     let doc = roxmltree::Document::parse(xml).ok()?;
-    let response = doc.descendants().find(|node| node.is_element()
-        && node.tag_name().name() == "GetDeviceInformationResponse")?;
+    let response = doc.descendants().find(|node| {
+        node.is_element() && node.tag_name().name() == "GetDeviceInformationResponse"
+    })?;
     let info = IdentityInfo {
         source: "ONVIF",
         friendly_name: None,
@@ -200,7 +222,12 @@ mod tests {
         assert!(endpoint(ip, "http://root@192.168.0.1/desc.xml").is_none());
         assert!(endpoint(ip, "http://192.168.0.1/desc.xml?token=secret").is_none());
         assert!(endpoint(ip, "http://192.168.0.1/desc.xml#frag").is_none());
-        assert_eq!(endpoint(ip, "http://192.168.0.1:1900/gatedesc.xml").unwrap().port, 1900);
+        assert_eq!(
+            endpoint(ip, "http://192.168.0.1:1900/gatedesc.xml")
+                .unwrap()
+                .port,
+            1900
+        );
     }
 
     #[test]

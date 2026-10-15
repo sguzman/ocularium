@@ -17,8 +17,8 @@ use if_addrs::{get_if_addrs, IfAddr};
 
 use crate::{
     identify::{self, HttpInfo, VendorRegistry},
-    mdns,
     identity::{AdvertisedEndpoint, IdentityInfo},
+    mdns,
 };
 
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
@@ -347,7 +347,8 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
         let cancel_onvif = Arc::clone(&cancelled);
         let onvif_scope = &scope;
         workers.spawn(move || {
-            if let Err(error) = probe_onvif(onvif_scope, &tx_onvif, &endpoints_onvif, &cancel_onvif) {
+            if let Err(error) = probe_onvif(onvif_scope, &tx_onvif, &endpoints_onvif, &cancel_onvif)
+            {
                 let _ = tx_onvif.send(Event::Warning(format!("ONVIF: {error}")));
             }
         });
@@ -379,7 +380,8 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
         }
         if !endpoints.is_empty() {
             let _ = tx.send(Event::Status(format!(
-                "Checking {} advertised device descriptions", endpoints.len()
+                "Checking {} advertised device descriptions",
+                endpoints.len()
             )));
         }
         for endpoint in endpoints {
@@ -387,8 +389,7 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
                 break;
             }
             let ip = match &endpoint {
-                AdvertisedEndpoint::Ssdp { ip, .. }
-                | AdvertisedEndpoint::Onvif { ip, .. } => *ip,
+                AdvertisedEndpoint::Ssdp { ip, .. } | AdvertisedEndpoint::Onvif { ip, .. } => *ip,
             };
             if let Some(info) = endpoint.inspect() {
                 let _ = tx.send(Event::Found(ip, Observation::Identity(info)));
@@ -496,7 +497,11 @@ fn probe_ssdp(
             }
             if let Ok(payload) = std::str::from_utf8(&buffer[..length]) {
                 if let Some(observation) = parse_ssdp(payload) {
-                    if let Observation::Ssdp { location: Some(location), .. } = &observation {
+                    if let Observation::Ssdp {
+                        location: Some(location),
+                        ..
+                    } = &observation
+                    {
                         let _ = endpoint_tx.send(AdvertisedEndpoint::Ssdp {
                             ip: *source.ip(),
                             location: location.clone(),

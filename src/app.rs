@@ -357,7 +357,10 @@ impl OculariumApp {
                             info.manufacturer.as_deref(),
                             info.model.as_deref(),
                             info.model_number.as_deref(),
-                        ].into_iter().flatten().any(|value| value.to_ascii_lowercase().contains(&needle))
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|value| value.to_ascii_lowercase().contains(&needle))
                     })
                     || d.vendor
                         .as_deref()
@@ -447,8 +450,12 @@ impl OculariumApp {
                             });
                             ui.label(d.mac.as_deref().unwrap_or("-"));
                             ui.label(d.vendor.as_deref().unwrap_or("Unknown"));
-                            let description = d.identities.iter()
-                                .find_map(|info| info.model.as_deref().or(info.friendly_name.as_deref()))
+                            let description = d
+                                .identities
+                                .iter()
+                                .find_map(|info| {
+                                    info.model.as_deref().or(info.friendly_name.as_deref())
+                                })
                                 .unwrap_or("-");
                             ui.label(description);
                             ui.end_row();
