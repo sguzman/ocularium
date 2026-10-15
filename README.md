@@ -23,11 +23,15 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Enumerates non-loopback IPv4 interfaces and offers one **/24 scan scope** at a time.
 - Sends an ONVIF WS-Discovery multicast probe (UDP 3702).
 - Sends a UPnP/SSDP M-SEARCH multicast probe (UDP 1900).
+- Uses interface-bound mDNS multicast to discover advertised RTSP, ONVIF, and related services (UDP 5353).
 - Checks selected TCP service ports across the chosen local /24 using bounded workers.
 - Performs a light RTSP OPTIONS handshake on responding RTSP ports.
+- Reads limited unauthenticated HTTP headers and HTML titles from selected open local ports; no credentials, redirects, or cloud access.
+- Looks up MAC manufacturers using installed local OUI databases; locally administered/randomized addresses are labeled rather than assigned fabricated vendors.
+- Offers a **Copy report** button containing scan results and device evidence.
 - Displays found IPs, detected services, advertised ONVIF addresses/scopes, SSDP headers, and Linux neighbor-table MACs when available.
 - Distinguishes confirmed protocol responses from **possible camera** classifications.
-- Supports cancellation and filtering. Nothing is uploaded externally.
+- Supports cancellation, filtering by metadata, and a copyable report. Nothing is uploaded externally.
 
 This is a discovery tool, **not** a vulnerability scanner: no password guessing, RTSP path brute forcing, unauthorized credential extraction, or exploitation. Scan networks you own or are authorized to administer.
 
@@ -37,7 +41,9 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 - Wi-Fi client isolation, mesh/router VLANs, multicast filtering, and local firewalls can hide devices.
 - Cloud-only cameras may appear as generic TCP devices or not appear at all.
 - A reachable TCP port or RTSP handshake does **not** prove a playable video stream.
-- MAC addresses are best-effort on Linux and manufacturer inference is not implemented yet.
+- MAC addresses are best-effort on Linux; manufacturer lookup requires an existing local vendor database, such as `/usr/share/hwdata/oui.txt`, `/usr/share/ieee-data/oui.txt`, or `/usr/share/nmap/nmap-mac-prefixes`. Missing vendor data is non-fatal. Do not install paid software.
+- mDNS can be blocked by multicast filtering or socket conflicts; scan warnings explain failures.
+- HTTP titles or RTSP port presence are only identification clues, never proof of accessible video.
 - Camera access credentials, playback, recording, snapshots, and MCP are later milestones.
 
 ## Architecture
