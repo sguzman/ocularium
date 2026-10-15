@@ -146,12 +146,20 @@ impl Device {
 
     pub fn apply(&mut self, observation: Observation) {
         match observation {
-            Observation::Onvif { xaddrs, scopes, types } => {
+            Observation::Onvif {
+                xaddrs,
+                scopes,
+                types,
+            } => {
                 merge_unique(&mut self.onvif_xaddrs, xaddrs);
                 merge_unique(&mut self.onvif_scopes, scopes);
                 merge_unique(&mut self.onvif_types, types);
             }
-            Observation::Ssdp { server, location, search_target } => {
+            Observation::Ssdp {
+                server,
+                location,
+                search_target,
+            } => {
                 if self.ssdp_server.is_none() {
                     self.ssdp_server = server;
                 }
@@ -162,7 +170,10 @@ impl Device {
                     self.ssdp_target = search_target;
                 }
             }
-            Observation::OpenPorts { ports, rtsp_responded } => {
+            Observation::OpenPorts {
+                ports,
+                rtsp_responded,
+            } => {
                 for port in ports {
                     if !self.open_ports.contains(&port) {
                         self.open_ports.push(port);
@@ -177,19 +188,24 @@ impl Device {
 
     /// A protocol hint, NOT proof that video is accessible.
     pub fn classification(&self) -> &'static str {
-        let advertises_video = self.onvif_types.iter().any(|s| {
-            s.to_ascii_lowercase().contains("networkvideotransmitter")
-        });
+        let advertises_video = self
+            .onvif_types
+            .iter()
+            .any(|s| s.to_ascii_lowercase().contains("networkvideotransmitter"));
         if advertises_video {
             "ONVIF camera"
         } else if !self.onvif_xaddrs.is_empty() {
             "ONVIF device"
         } else if self.rtsp_responded {
             "RTSP service"
-        } else if self.open_ports.iter().any(|p| [554, 8554, 8899, 34567].contains(p))
-            || self.ssdp_target.as_ref().is_some_and(|s| {
-                s.to_ascii_lowercase().contains("camera")
-            })
+        } else if self
+            .open_ports
+            .iter()
+            .any(|p| [554, 8554, 8899, 34567].contains(p))
+            || self
+                .ssdp_target
+                .as_ref()
+                .is_some_and(|s| s.to_ascii_lowercase().contains("camera"))
         {
             "Possible camera"
         } else {
@@ -247,11 +263,7 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
     });
 }
 
-fn probe_onvif(
-    scope: &Scope,
-    tx: &Sender<Event>,
-    cancelled: &AtomicBool,
-) -> std::io::Result<()> {
+fn probe_onvif(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std::io::Result<()> {
     let socket = UdpSocket::bind((scope.local_ip, 0))?;
     socket.set_read_timeout(Some(Duration::from_millis(180)))?;
     let id = uuid::Uuid::new_v4();
@@ -278,13 +290,15 @@ fn probe_onvif(
 
 fn parse_onvif(message: &str) -> Option<Observation> {
     let document = roxmltree::Document::parse(message).ok()?;
-    if !document.descendants().any(|node| {
-        node.is_element() && node.tag_name().name() == "ProbeMatch"
-    }) {
+    if !document
+        .descendants()
+        .any(|node| node.is_element() && node.tag_name().name() == "ProbeMatch")
+    {
         return None;
     }
     let elements = |name: &str| -> Vec<String> {
-        document.descendants()
+        document
+            .descendants()
             .filter(|node| node.is_element() && node.tag_name().name() == name)
             .filter_map(|node| node.text())
             .flat_map(|value| value.split_whitespace())
@@ -298,11 +312,7 @@ fn parse_onvif(message: &str) -> Option<Observation> {
     })
 }
 
-fn probe_ssdp(
-    scope: &Scope,
-    tx: &Sender<Event>,
-    cancelled: &AtomicBool,
-) -> std::io::Result<()> {
+fn probe_ssdp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std::io::Result<()> {
     let socket = UdpSocket::bind((scope.local_ip, 0))?;
     socket.set_read_timeout(Some(Duration::from_millis(180)))?;
     let request = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n\r\n";
@@ -330,11 +340,14 @@ fn parse_ssdp(message: &str) -> Option<Observation> {
         return None;
     }
     let header = |key: &str| {
-        message.lines().filter_map(|line| line.split_once(':')).find_map(
-            |(name, value)| {
-                name.trim().eq_ignore_ascii_case(key).then(|| value.trim().to_owned())
-            },
-        )
+        message
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find_map(|(name, value)| {
+                name.trim()
+                    .eq_ignore_ascii_case(key)
+                    .then(|| value.trim().to_owned())
+            })
     };
     Some(Observation::Ssdp {
         server: header("SERVER"),
@@ -376,7 +389,10 @@ fn probe_tcp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) {
                 if !ports.is_empty() {
                     let _ = tx.send(Event::Found(
                         ip,
-                        Observation::OpenPorts { ports, rtsp_responded },
+                        Observation::OpenPorts {
+                            ports,
+                            rtsp_responded,
+                        },
                     ));
                 }
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
@@ -402,7 +418,8 @@ fn arp_neighbors(scope: &Scope) -> Vec<(Ipv4Addr, String)> {
     let Ok(contents) = fs::read_to_string("/proc/net/arp") else {
         return Vec::new();
     };
-    contents.lines()
+    contents
+        .lines()
         .skip(1)
         .filter_map(|line| {
             let columns: Vec<_> = line.split_whitespace().collect();
@@ -461,7 +478,10 @@ mod tests {
     #[test]
     fn rtsp_port_is_only_a_candidate() {
         let mut device = Device::new(Ipv4Addr::new(192, 168, 1, 13));
-        device.apply(Observation::OpenPorts { ports: vec![554], rtsp_responded: false });
+        device.apply(Observation::OpenPorts {
+            ports: vec![554],
+            rtsp_responded: false,
+        });
         assert_eq!(device.classification(), "Possible camera");
         assert!(device.is_camera_candidate());
     }

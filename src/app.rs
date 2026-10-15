@@ -135,7 +135,11 @@ impl OculariumApp {
     }
 
     fn overview(&self, ui: &mut egui::Ui) {
-        let candidates = self.devices.values().filter(|d| d.is_camera_candidate()).count();
+        let candidates = self
+            .devices
+            .values()
+            .filter(|d| d.is_camera_candidate())
+            .count();
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{} discovered devices", self.devices.len())).strong());
             ui.separator();
@@ -178,7 +182,10 @@ impl OculariumApp {
             {
                 self.start_scan();
             }
-            if ui.add_enabled(self.scanning, egui::Button::new("Cancel")).clicked() {
+            if ui
+                .add_enabled(self.scanning, egui::Button::new("Cancel"))
+                .clicked()
+            {
                 if let Some(cancel) = &self.cancelled {
                     cancel.store(true, Ordering::Relaxed);
                     self.status = "Stopping scan...".into();
@@ -200,23 +207,26 @@ impl OculariumApp {
             ui.heading("Discovered devices");
             ui.separator();
             ui.checkbox(&mut self.camera_only, "Camera candidates only");
-            ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filter IP, service, label"));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.filter).hint_text("Filter IP, service, label"),
+            );
         });
         ui.separator();
         let needle = self.filter.trim().to_ascii_lowercase();
-        let devices: Vec<Device> = self.devices
+        let devices: Vec<Device> = self
+            .devices
             .values()
             .filter(|d| !self.camera_only || d.is_camera_candidate())
             .filter(|d| {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
                     || d.classification().to_ascii_lowercase().contains(&needle)
-                    || d.ssdp_server.as_deref().is_some_and(|s| {
-                        s.to_ascii_lowercase().contains(&needle)
-                    })
-                    || d.onvif_scopes.iter().any(|s| {
-                        s.to_ascii_lowercase().contains(&needle)
-                    })
+                    || d.ssdp_server
+                        .as_deref()
+                        .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
+                    || d.onvif_scopes
+                        .iter()
+                        .any(|s| s.to_ascii_lowercase().contains(&needle))
             })
             .cloned()
             .collect();
@@ -257,12 +267,20 @@ impl OculariumApp {
                             {
                                 self.selected_device = Some(d.ip);
                             }
-                            let color = if d.is_camera_candidate() { HIGHLIGHT } else { MUTED };
+                            let color = if d.is_camera_candidate() {
+                                HIGHLIGHT
+                            } else {
+                                MUTED
+                            };
                             ui.label(RichText::new(d.classification()).color(color));
                             ui.label(if d.open_ports.is_empty() {
                                 "-".into()
                             } else {
-                                d.open_ports.iter().map(u16::to_string).collect::<Vec<_>>().join(", ")
+                                d.open_ports
+                                    .iter()
+                                    .map(u16::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             });
                             ui.label(d.mac.as_deref().unwrap_or("-"));
                             ui.end_row();
