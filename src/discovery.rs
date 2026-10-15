@@ -18,6 +18,7 @@ use if_addrs::{get_if_addrs, IfAddr};
 use crate::{
     identify::{self, HttpInfo, VendorRegistry},
     mdns,
+    identity::{self, AdvertisedEndpoint, IdentityInfo},
 };
 
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
@@ -154,6 +155,7 @@ pub enum Observation {
     Mac(String),
     Vendor(String),
     Http(HttpInfo),
+    Identity(IdentityInfo),
     Mdns {
         names: Vec<String>,
         services: Vec<String>,
@@ -165,6 +167,7 @@ pub enum Observation {
 pub enum Event {
     Found(Ipv4Addr, Observation),
     Progress(usize),
+    Status(String),
     Warning(String),
     Finished { cancelled: bool },
 }
@@ -175,6 +178,7 @@ pub struct Device {
     pub mac: Option<String>,
     pub vendor: Option<String>,
     pub http: Vec<HttpInfo>,
+    pub identities: Vec<IdentityInfo>,
     pub mdns_names: Vec<String>,
     pub mdns_services: Vec<String>,
     pub mdns_txt: Vec<String>,
@@ -195,6 +199,7 @@ impl Device {
             mac: None,
             vendor: None,
             http: Vec::new(),
+            identities: Vec::new(),
             mdns_names: Vec::new(),
             mdns_services: Vec::new(),
             mdns_txt: Vec::new(),
@@ -247,6 +252,11 @@ impl Device {
                 self.open_ports.sort_unstable();
                 self.rtsp_responded |= rtsp_responded;
             }
+            Observation::Identity(info) => {
+                if !self.identities.contains(&info) {
+                    self.identities.push(info);
+                }
+            }
             Observation::Mac(mac) => self.mac = Some(mac),
             Observation::Vendor(vendor) => self.vendor = Some(vendor),
             Observation::Http(info) => {
@@ -278,6 +288,8 @@ impl Device {
             "ONVIF device"
         } else if self.rtsp_responded {
             "RTSP service"
+        } else if self.identities.iter().any(IdentityInfo::camera_hint) {
+            "Camera description"
         } else if self.http.iter().any(HttpInfo::camera_hint) {
             "Camera web interface"
         } else if self.mdns_services.iter().any(|service| {
@@ -317,6 +329,9 @@ fn merge_unique(target: &mut Vec<String>, new: Vec<String>) {
 
 /// Scans one selected IPv4 /24. The egui thread never runs blocking I/O.
 pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
+    // Capture advertisement targets for a bounded enrichment pass after the
+    // multicast listeners finish; duplicate SSDP responses are common.
+    let (endpoint_tx, endpoint_rx) = std::sync::mpsc::channel::<AdvertisedEndpoint>();
     thread::scope(|workers| {
         let tx_mdns = tx.clone();
         let cancel_mdns = Arc::clone(&cancelled);
@@ -328,19 +343,21 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
         });
 
         let tx_onvif = tx.clone();
+        let endpoints_onvif = endpoint_tx.clone();
         let cancel_onvif = Arc::clone(&cancelled);
         let onvif_scope = &scope;
         workers.spawn(move || {
-            if let Err(error) = probe_onvif(onvif_scope, &tx_onvif, &cancel_onvif) {
+            if let Err(error) = probe_onvif(onvif_scope, &tx_onvif, &endpoints_onvif, &cancel_onvif) {
                 let _ = tx_onvif.send(Event::Warning(format!("ONVIF: {error}")));
             }
         });
 
         let tx_ssdp = tx.clone();
+        let endpoints_ssdp = endpoint_tx.clone();
         let cancel_ssdp = Arc::clone(&cancelled);
         let ssdp_scope = &scope;
         workers.spawn(move || {
-            if let Err(error) = probe_ssdp(ssdp_scope, &tx_ssdp, &cancel_ssdp) {
+            if let Err(error) = probe_ssdp(ssdp_scope, &tx_ssdp, &endpoints_ssdp, &cancel_ssdp) {
                 let _ = tx_ssdp.send(Event::Warning(format!("SSDP: {error}")));
             }
         });
@@ -350,6 +367,34 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
         let tcp_scope = &scope;
         workers.spawn(move || probe_tcp(tcp_scope, &tx_tcp, &cancel_tcp));
     });
+
+    drop(endpoint_tx);
+    if !cancelled.load(Ordering::Relaxed) {
+        let mut unique = HashSet::new();
+        let mut endpoints = Vec::new();
+        for advertised in endpoint_rx.try_iter() {
+            if unique.insert(advertised.clone()) && endpoints.len() < 16 {
+                endpoints.push(advertised);
+            }
+        }
+        if !endpoints.is_empty() {
+            let _ = tx.send(Event::Status(format!(
+                "Checking {} advertised device descriptions", endpoints.len()
+            )));
+        }
+        for endpoint in endpoints {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+            let ip = match &endpoint {
+                AdvertisedEndpoint::Ssdp { ip, .. }
+                | AdvertisedEndpoint::Onvif { ip, .. } => *ip,
+            };
+            if let Some(info) = endpoint.inspect() {
+                let _ = tx.send(Event::Found(ip, Observation::Identity(info)));
+            }
+        }
+    }
 
     if !cancelled.load(Ordering::Relaxed) {
         let registry = VendorRegistry::load();
@@ -370,7 +415,12 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
     });
 }
 
-fn probe_onvif(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std::io::Result<()> {
+fn probe_onvif(
+    scope: &Scope,
+    tx: &Sender<Event>,
+    endpoint_tx: &Sender<AdvertisedEndpoint>,
+    cancelled: &AtomicBool,
+) -> std::io::Result<()> {
     let socket = UdpSocket::bind((scope.local_ip, 0))?;
     socket.set_read_timeout(Some(Duration::from_millis(180)))?;
     let id = uuid::Uuid::new_v4();
@@ -387,6 +437,14 @@ fn probe_onvif(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std
             }
             if let Ok(payload) = std::str::from_utf8(&buffer[..length]) {
                 if let Some(observation) = parse_onvif(payload) {
+                    if let Observation::Onvif { xaddrs, .. } = &observation {
+                        for address in xaddrs.iter().take(4) {
+                            let _ = endpoint_tx.send(AdvertisedEndpoint::Onvif {
+                                ip: *source.ip(),
+                                address: address.clone(),
+                            });
+                        }
+                    }
                     let _ = tx.send(Event::Found(*source.ip(), observation));
                 }
             }
@@ -419,7 +477,12 @@ fn parse_onvif(message: &str) -> Option<Observation> {
     })
 }
 
-fn probe_ssdp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std::io::Result<()> {
+fn probe_ssdp(
+    scope: &Scope,
+    tx: &Sender<Event>,
+    endpoint_tx: &Sender<AdvertisedEndpoint>,
+    cancelled: &AtomicBool,
+) -> std::io::Result<()> {
     let socket = UdpSocket::bind((scope.local_ip, 0))?;
     socket.set_read_timeout(Some(Duration::from_millis(180)))?;
     let request = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 2\r\nST: ssdp:all\r\n\r\n";
@@ -433,6 +496,12 @@ fn probe_ssdp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) -> std:
             }
             if let Ok(payload) = std::str::from_utf8(&buffer[..length]) {
                 if let Some(observation) = parse_ssdp(payload) {
+                    if let Observation::Ssdp { location: Some(location), .. } = &observation {
+                        let _ = endpoint_tx.send(AdvertisedEndpoint::Ssdp {
+                            ip: *source.ip(),
+                            location: location.clone(),
+                        });
+                    }
                     let _ = tx.send(Event::Found(*source.ip(), observation));
                 }
             }
@@ -596,6 +665,21 @@ eno1 00000000 0100A8C0 0003 0 0 100 00000000 0 0 0\n";
         assert_eq!(default_route_interface(table).as_deref(), Some("eno1"));
         assert!(interface_rank("eno1", Some("eno1")) < interface_rank("br-abc", Some("eno1")));
         assert!(interface_rank("eno1", None) < interface_rank("br-abc", None));
+    }
+
+    #[test]
+    fn description_can_identify_camera_without_port_scans() {
+        let mut d = Device::new(Ipv4Addr::new(192, 168, 0, 42));
+        d.apply(Observation::Identity(IdentityInfo {
+            source: "UPnP/SSDP",
+            friendly_name: Some("Network Camera".into()),
+            manufacturer: Some("Example".into()),
+            model: Some("CAM-200".into()),
+            model_number: None,
+            device_type: None,
+            firmware: None,
+        }));
+        assert_eq!(d.classification(), "Camera description");
     }
 
     #[test]

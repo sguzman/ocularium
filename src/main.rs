@@ -1,6 +1,7 @@
 mod app;
 mod discovery;
 mod identify;
+mod identity;
 mod mdns;
 mod registry;
 mod rtsp;

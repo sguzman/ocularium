@@ -120,6 +120,7 @@ impl OculariumApp {
                             .or_insert_with(|| Device::new(ip))
                             .apply(observation);
                     }
+                    Ok(Event::Status(message)) => self.status = message,
                     Ok(Event::Progress(completed)) => {
                         self.completed = self.completed.max(completed);
                     }
@@ -224,6 +225,14 @@ impl OculariumApp {
                     info.summary(),
                     info.server,
                     info.codecs,
+                );
+            }
+            for id in &device.identities {
+                let _ = writeln!(
+                    report,
+                    "  {}: name={:?}, manufacturer={:?}, model={:?}, model number={:?}, type={:?}, firmware={:?}",
+                    id.source, id.friendly_name, id.manufacturer, id.model,
+                    id.model_number, id.device_type, id.firmware,
                 );
             }
             for service in &device.mdns_services {
@@ -342,6 +351,14 @@ impl OculariumApp {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
                     || d.classification().to_ascii_lowercase().contains(&needle)
+                    || d.identities.iter().any(|info| {
+                        [
+                            info.friendly_name.as_deref(),
+                            info.manufacturer.as_deref(),
+                            info.model.as_deref(),
+                            info.model_number.as_deref(),
+                        ].into_iter().flatten().any(|value| value.to_ascii_lowercase().contains(&needle))
+                    })
                     || d.vendor
                         .as_deref()
                         .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
@@ -395,7 +412,8 @@ impl OculariumApp {
                         ui.strong("Classification");
                         ui.strong("Ports");
                         ui.strong("MAC");
-                        ui.strong("Manufacturer");
+                        ui.strong("MAC vendor");
+                        ui.strong("Advertised device");
                         ui.end_row();
                         for d in &devices {
                             if ui
@@ -429,6 +447,10 @@ impl OculariumApp {
                             });
                             ui.label(d.mac.as_deref().unwrap_or("-"));
                             ui.label(d.vendor.as_deref().unwrap_or("Unknown"));
+                            let description = d.identities.iter()
+                                .find_map(|info| info.model.as_deref().or(info.friendly_name.as_deref()))
+                                .unwrap_or("-");
+                            ui.label(description);
                             ui.end_row();
                         }
                     });
@@ -564,6 +586,23 @@ impl OculariumApp {
         }
         if let Some(location) = &device.ssdp_location {
             ui.label(format!("SSDP location: {location}"));
+        }
+        for identity in &device.identities {
+            ui.group(|ui| {
+                ui.strong(format!("Advertised identity ({})", identity.source));
+                for (label, value) in [
+                    ("Name", identity.friendly_name.as_deref()),
+                    ("Manufacturer", identity.manufacturer.as_deref()),
+                    ("Model", identity.model.as_deref()),
+                    ("Model number", identity.model_number.as_deref()),
+                    ("Device type", identity.device_type.as_deref()),
+                    ("Firmware", identity.firmware.as_deref()),
+                ] {
+                    if let Some(value) = value {
+                        ui.label(format!("{label}: {value}"));
+                    }
+                }
+            });
         }
         for info in &device.http {
             ui.label(format!(
