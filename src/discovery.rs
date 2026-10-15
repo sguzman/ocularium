@@ -24,6 +24,13 @@ use crate::{
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
 const SSDP_MULTICAST: (&str, u16) = ("239.255.255.250", 1900);
 const PORTS: [u16; 9] = [80, 443, 554, 8554, 8000, 8080, 8899, 5000, 34567];
+// Optional deep scan: a bounded set of alternate service ports, only on
+// already-discovered unidentified hosts, never across the whole /24.
+const DEEP_PORTS: [u16; 15] = [
+    81, 88, 90, 5001, 8001, 8081, 8088, 8090, 8443, 8555,
+    9000, 9001, 10000, 10554, 37777,
+];
+const DEEP_WORKERS: usize = 8;
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(170);
 const DISCOVERY_WINDOW: Duration = Duration::from_secs(3);
 const WORKERS: usize = 40;
@@ -556,6 +563,82 @@ fn probe_tcp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) {
     });
 }
 
+/// Strictly scopes a targeted second pass to previously seen hosts on the
+/// selected subnet and caps total work. Never silently scans other networks.
+fn deep_targets(scope: &Scope, hosts: Vec<Ipv4Addr>) -> VecDeque<Ipv4Addr> {
+    let mut filtered: Vec<_> = hosts
+        .into_iter()
+        .filter(|ip| scope.contains(*ip) && *ip != scope.local_ip)
+        .collect();
+    filtered.sort_unstable();
+    filtered.dedup();
+    filtered.truncate(64);
+    filtered.into()
+}
+
+/// An optional second pass, invoked only by the user. It checks a small
+/// collection of alternate ports against unidentified hosts from an earlier
+/// normal scan. Nothing attempts authentication or undocumented credentials.
+pub fn deep_scan(
+    scope: Scope,
+    hosts: Vec<Ipv4Addr>,
+    tx: Sender<Event>,
+    cancelled: Arc<AtomicBool>,
+) {
+    let queue = deep_targets(&scope, hosts);
+    let total = queue.len();
+    let _ = tx.send(Event::Status(format!(
+        "Deep scanning {total} unidentified devices"
+    )));
+    let jobs = Arc::new(Mutex::new(queue));
+    let completed = AtomicUsize::new(0);
+    thread::scope(|pool| {
+        for _ in 0..DEEP_WORKERS.min(total) {
+            let jobs = Arc::clone(&jobs);
+            let tx = tx.clone();
+            let completed = &completed;
+            let cancelled = Arc::clone(&cancelled);
+            pool.spawn(move || loop {
+                if cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
+                let Some(ip) = jobs.lock().expect("deep scan queue").pop_front() else {
+                    return;
+                };
+                let mut ports = Vec::new();
+                let mut rtsp_responded = false;
+                for port in DEEP_PORTS {
+                    if cancelled.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let address = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                    if let Ok(stream) = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT) {
+                        if [8555, 10554].contains(&port) {
+                            rtsp_responded |= rtsp_options(stream, ip, port);
+                        } else if [81, 88, 8001, 8081, 8088, 8090, 9000].contains(&port) {
+                            if let Some(info) = identify::http_hint(stream, ip, port) {
+                                let _ = tx.send(Event::Found(ip, Observation::Http(info)));
+                            }
+                        }
+                        ports.push(port);
+                    }
+                }
+                if !ports.is_empty() {
+                    let _ = tx.send(Event::Found(
+                        ip,
+                        Observation::OpenPorts { ports, rtsp_responded },
+                    ));
+                }
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                let _ = tx.send(Event::Progress(done));
+            });
+        }
+    });
+    let _ = tx.send(Event::Finished {
+        cancelled: cancelled.load(Ordering::Relaxed),
+    });
+}
+
 fn rtsp_options(mut stream: TcpStream, ip: Ipv4Addr, port: u16) -> bool {
     let _ = stream.set_read_timeout(Some(CONNECT_TIMEOUT));
     let _ = stream.set_write_timeout(Some(CONNECT_TIMEOUT));
@@ -590,6 +673,26 @@ fn arp_neighbors(scope: &Scope) -> Vec<(Ipv4Addr, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_scan_ignores_unrelated_subnets_and_limits_targets() {
+        let scope = Scope {
+            interface: "eno1".into(),
+            local_ip: Ipv4Addr::new(192, 168, 0, 53),
+            base: [192, 168, 0],
+        };
+        let targets = deep_targets(&scope, vec![
+            Ipv4Addr::new(192, 168, 0, 100),
+            Ipv4Addr::new(192, 168, 0, 100),
+            Ipv4Addr::new(172, 31, 0, 2),
+            scope.local_ip,
+            Ipv4Addr::new(192, 168, 0, 103),
+        ]);
+        assert_eq!(targets.into_iter().collect::<Vec<_>>(), vec![
+            Ipv4Addr::new(192, 168, 0, 100),
+            Ipv4Addr::new(192, 168, 0, 103),
+        ]);
+    }
 
     #[test]
     fn scope_excludes_own_address() {
