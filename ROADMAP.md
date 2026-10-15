@@ -31,7 +31,10 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
 - [ ] Persistent historical scan inventory (without stale devices appearing online)
-- [ ] Graded evidence/confidence
+- [x] Evidence-based classification: advertised gateways, media servers, printers, Calibre services, camera candidates and unidentified devices
+- [x] Explain why each classification was assigned; separate device descriptions, protocol responses, service advertisements and open-port hints
+- [x] Device inventory filters for camera candidates vs unidentified hardware (no manufacturer-based guessing)
+- [ ] Historical evidence tracking and multi-source confidence calibration
 
 ## Milestone 0.3 — View
 
