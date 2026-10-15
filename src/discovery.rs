@@ -15,6 +15,8 @@ use std::{
 
 use if_addrs::{get_if_addrs, IfAddr};
 
+use crate::{identify::{self, HttpInfo, VendorRegistry}, mdns};
+
 const ONVIF_MULTICAST: (&str, u16) = ("239.255.255.250", 3702);
 const SSDP_MULTICAST: (&str, u16) = ("239.255.255.250", 1900);
 const PORTS: [u16; 9] = [80, 443, 554, 8554, 8000, 8080, 8899, 5000, 34567];
@@ -147,6 +149,13 @@ pub enum Observation {
         rtsp_responded: bool,
     },
     Mac(String),
+    Vendor(String),
+    Http(HttpInfo),
+    Mdns {
+        names: Vec<String>,
+        services: Vec<String>,
+        txt: Vec<String>,
+    },
 }
 
 #[derive(Debug)]
@@ -161,6 +170,11 @@ pub enum Event {
 pub struct Device {
     pub ip: Ipv4Addr,
     pub mac: Option<String>,
+    pub vendor: Option<String>,
+    pub http: Vec<HttpInfo>,
+    pub mdns_names: Vec<String>,
+    pub mdns_services: Vec<String>,
+    pub mdns_txt: Vec<String>,
     pub onvif_xaddrs: Vec<String>,
     pub onvif_scopes: Vec<String>,
     pub onvif_types: Vec<String>,
@@ -176,6 +190,11 @@ impl Device {
         Self {
             ip,
             mac: None,
+            vendor: None,
+            http: Vec::new(),
+            mdns_names: Vec::new(),
+            mdns_services: Vec::new(),
+            mdns_txt: Vec::new(),
             onvif_xaddrs: Vec::new(),
             onvif_scopes: Vec::new(),
             onvif_types: Vec::new(),
@@ -226,6 +245,17 @@ impl Device {
                 self.rtsp_responded |= rtsp_responded;
             }
             Observation::Mac(mac) => self.mac = Some(mac),
+            Observation::Vendor(vendor) => self.vendor = Some(vendor),
+            Observation::Http(info) => {
+                if !self.http.iter().any(|item| item.port == info.port) {
+                    self.http.push(info);
+                }
+            }
+            Observation::Mdns { names, services, txt } => {
+                merge_unique(&mut self.mdns_names, names);
+                merge_unique(&mut self.mdns_services, services);
+                merge_unique(&mut self.mdns_txt, txt);
+            }
         }
     }
 
@@ -241,6 +271,14 @@ impl Device {
             "ONVIF device"
         } else if self.rtsp_responded {
             "RTSP service"
+        } else if self.http.iter().any(HttpInfo::camera_hint) {
+            "Camera web interface"
+        } else if self.mdns_services.iter().any(|service| {
+            let service = service.to_ascii_lowercase();
+            service.contains("_rtsp._tcp") || service.contains("_onvif._tcp")
+                || service.contains("_axis-video._tcp")
+        }) {
+            "Camera service advertised"
         } else if self
             .open_ports
             .iter()
@@ -272,6 +310,15 @@ fn merge_unique(target: &mut Vec<String>, new: Vec<String>) {
 /// Scans one selected IPv4 /24. The egui thread never runs blocking I/O.
 pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
     thread::scope(|workers| {
+        let tx_mdns = tx.clone();
+        let cancel_mdns = Arc::clone(&cancelled);
+        let mdns_scope = &scope;
+        workers.spawn(move || {
+            if let Err(error) = mdns::probe(mdns_scope, &tx_mdns, &cancel_mdns) {
+                let _ = tx_mdns.send(Event::Warning(format!("mDNS: {error}")));
+            }
+        });
+
         let tx_onvif = tx.clone();
         let cancel_onvif = Arc::clone(&cancelled);
         let onvif_scope = &scope;
@@ -297,8 +344,17 @@ pub fn scan(scope: Scope, tx: Sender<Event>, cancelled: Arc<AtomicBool>) {
     });
 
     if !cancelled.load(Ordering::Relaxed) {
+        let registry = VendorRegistry::load();
         for (ip, mac) in arp_neighbors(&scope) {
+            if let Some(vendor) = registry.vendor(&mac) {
+                let _ = tx.send(Event::Found(ip, Observation::Vendor(vendor)));
+            }
             let _ = tx.send(Event::Found(ip, Observation::Mac(mac)));
+        }
+        if !registry.available() {
+            let _ = tx.send(Event::Warning(
+                "Offline vendor database not found (optional: install hwdata or nmap)".into(),
+            ));
         }
     }
     let _ = tx.send(Event::Finished {
@@ -423,8 +479,14 @@ fn probe_tcp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) {
                     }
                     let address = SocketAddr::V4(SocketAddrV4::new(ip, port));
                     if let Ok(stream) = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT) {
-                        if (port == 554 || port == 8554) && rtsp_options(stream, ip, port) {
-                            rtsp_responded = true;
+                        if port == 554 || port == 8554 {
+                            if rtsp_options(stream, ip, port) {
+                                rtsp_responded = true;
+                            }
+                        } else if (port == 80 || port == 8080 || port == 8000 || port == 5000)
+                            && let Some(info) = identify::http_hint(stream, ip, port)
+                        {
+                            let _ = tx.send(Event::Found(ip, Observation::Http(info)));
                         }
                         ports.push(port);
                     }
