@@ -1,0 +1,15 @@
+[package]
+name = "ocularium"
+version = "0.1.0"
+edition = "2021"
+description = "Local-first desktop discovery for network cameras"
+repository = "https://github.com/sguzman/ocularium"
+
+[dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+if-addrs = "0.15"
+roxmltree = "0.20"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = "thin"
