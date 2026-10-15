@@ -24,10 +24,12 @@ pub struct RtspInspection {
 
 impl RtspInspection {
     pub fn summary(&self) -> String {
-        let describe = self.describe_status
+        let describe = self
+            .describe_status
             .map(|status| status.to_string())
             .unwrap_or_else(|| "no response".to_owned());
-        let options = self.options_status
+        let options = self
+            .options_status
             .map(|status| status.to_string())
             .unwrap_or_else(|| "no response".to_owned());
         format!("OPTIONS {options}; DESCRIBE / {describe}: {}", self.message)
@@ -44,12 +46,13 @@ struct Response {
 }
 
 fn header_value(headers: &str, key: &str) -> Option<String> {
-    headers.lines()
+    headers
+        .lines()
         .filter_map(|line| line.split_once(':'))
         .find_map(|(name, value)| {
-            name.trim().eq_ignore_ascii_case(key).then(|| {
-                value.trim().chars().take(160).collect()
-            })
+            name.trim()
+                .eq_ignore_ascii_case(key)
+                .then(|| value.trim().chars().take(160).collect())
         })
 }
 
@@ -74,12 +77,18 @@ fn request(ip: Ipv4Addr, port: u16, method: &str, seq: u8) -> Result<Response, S
     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
     let mut stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
         .map_err(|error| format!("Connect: {error}"))?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(|e| e.to_string())?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|e| e.to_string())?;
     let packet = format!(
         "{method} rtsp://{ip}:{port}/ RTSP/1.0\r\nCSeq: {seq}\r\nUser-Agent: Ocularium/0.1\r\nAccept: application/sdp\r\n\r\n"
     );
-    stream.write_all(packet.as_bytes()).map_err(|e| e.to_string())?;
+    stream
+        .write_all(packet.as_bytes())
+        .map_err(|e| e.to_string())?;
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
     while data.len() < MAX_RESPONSE {
@@ -100,7 +109,12 @@ fn request(ip: Ipv4Addr, port: u16, method: &str, seq: u8) -> Result<Response, S
                     }
                 }
             }
-            Err(err) if err.kind() == std::io::ErrorKind::TimedOut || err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                break
+            }
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -155,9 +169,10 @@ pub fn inspect(ip: Ipv4Addr, port: u16) -> RtspInspection {
                 result.authentication = header.split_whitespace().next().map(str::to_owned);
             }
             result.sdp_received = response.status == 200
-                && response.content_type.as_deref().is_some_and(|s| {
-                    s.to_ascii_lowercase().contains("application/sdp")
-                });
+                && response
+                    .content_type
+                    .as_deref()
+                    .is_some_and(|s| s.to_ascii_lowercase().contains("application/sdp"));
             if result.sdp_received {
                 result.codecs = codecs(&response.body);
                 result.message = "SDP description received, video playback not yet verified".into();

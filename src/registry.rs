@@ -1,7 +1,7 @@
 //! Persistent user-created labels. This intentionally does not cache online
 //! status, port results or credentials: each scan must provide fresh evidence.
-use std::{collections::BTreeMap, env, fs, io, path::PathBuf};
 use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, env, fs, io, path::PathBuf};
 
 use crate::discovery::Device;
 
@@ -14,15 +14,24 @@ pub struct Registry {
 impl Registry {
     pub fn load() -> (Self, Option<String>) {
         let Some(path) = registry_path() else {
-            return (Self::default(), Some("HOME and XDG_DATA_HOME are unset; labels will not persist".into()));
+            return (
+                Self::default(),
+                Some("HOME and XDG_DATA_HOME are unset; labels will not persist".into()),
+            );
         };
         match fs::read_to_string(&path) {
             Ok(data) => match serde_json::from_str(&data) {
                 Ok(registry) => (registry, None),
-                Err(error) => (Self::default(), Some(format!("Could not read label registry: {error}"))),
+                Err(error) => (
+                    Self::default(),
+                    Some(format!("Could not read label registry: {error}")),
+                ),
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => (Self::default(), None),
-            Err(error) => (Self::default(), Some(format!("Could not load labels: {error}"))),
+            Err(error) => (
+                Self::default(),
+                Some(format!("Could not load labels: {error}")),
+            ),
         }
     }
 
@@ -43,8 +52,11 @@ impl Registry {
     }
 
     fn save(&self) -> io::Result<()> {
-        let path = registry_path().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME unavailable"))?;
-        let dir = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Bad registry path"))?;
+        let path = registry_path()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME unavailable"))?;
+        let dir = path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Bad registry path"))?;
         fs::create_dir_all(dir)?;
         let bytes = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         // Write into the same directory, then rename for an atomic update.
@@ -76,9 +88,9 @@ mod tests {
 
     #[test]
     fn uses_stable_mac_when_available() {
-        let mut original = Device::new(Ipv4Addr::new(192,168,0,103));
+        let mut original = Device::new(Ipv4Addr::new(192, 168, 0, 103));
         original.mac = Some("AA:BB:CC:DD:EE:FF".into());
-        let mut moved = Device::new(Ipv4Addr::new(192,168,0,213));
+        let mut moved = Device::new(Ipv4Addr::new(192, 168, 0, 213));
         moved.mac = Some("aa:bb:cc:dd:ee:ff".into());
         assert_eq!(key(&original), key(&moved));
     }

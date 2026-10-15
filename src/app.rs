@@ -147,12 +147,14 @@ impl OculariumApp {
             match rx.try_recv() {
                 Ok(inspection) => {
                     self.inspecting = None;
-                    self.inspections.insert((inspection.ip, inspection.port), inspection);
+                    self.inspections
+                        .insert((inspection.ip, inspection.port), inspection);
                 }
                 Err(mpsc::TryRecvError::Empty) => self.rtsp_receiver = Some(rx),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.inspecting = None;
-                    self.messages.push("RTSP inspection ended unexpectedly".into());
+                    self.messages
+                        .push("RTSP inspection ended unexpectedly".into());
                 }
             }
         }
@@ -199,11 +201,18 @@ impl OculariumApp {
             if let Some(alias) = self.registry.alias(device) {
                 let _ = writeln!(report, "  User label: {alias}");
             }
-            for info in self.inspections.values().filter(|report| report.ip == device.ip) {
+            for info in self
+                .inspections
+                .values()
+                .filter(|report| report.ip == device.ip)
+            {
                 let _ = writeln!(
                     report,
                     "  RTSP port {}: {} | server={:?} | codecs={:?}",
-                    info.port, info.summary(), info.server, info.codecs,
+                    info.port,
+                    info.summary(),
+                    info.server,
+                    info.codecs,
                 );
             }
             for service in &device.mdns_services {
@@ -415,7 +424,11 @@ impl OculariumApp {
     fn details_panel(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Device details");
-        let Some(device) = self.selected_device.and_then(|ip| self.devices.get(&ip)).cloned() else {
+        let Some(device) = self
+            .selected_device
+            .and_then(|ip| self.devices.get(&ip))
+            .cloned()
+        else {
             ui.label(RichText::new("Select a device by clicking its IP address.").color(MUTED));
             return;
         };
