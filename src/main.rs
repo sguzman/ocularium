@@ -2,6 +2,8 @@ mod app;
 mod discovery;
 mod identify;
 mod mdns;
+mod registry;
+mod rtsp;
 
 use eframe::egui;
 
