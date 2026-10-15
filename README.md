@@ -30,7 +30,8 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Looks up MAC manufacturers using installed local OUI databases; locally administered/randomized addresses are labeled rather than assigned fabricated vendors.
 - Offers a **Copy report** button containing scan results and device evidence.
 - Saves optional user-authored device labels in `$XDG_DATA_HOME/ocularium/registry.json` (or `~/.local/share/ocularium/registry.json`). Labels use MAC identity where present, falling back to IP addresses; discovery results and camera credentials are **not** persisted.
-- Provides an on-demand **Inspect RTSP** button on detected port 554/8554 devices. The tool sends RTSP OPTIONS and DESCRIBE requests to `/`, reports server/authentication hints and SDP codecs if present. It never guesses stream paths or attempts credentials.
+- Provides an on-demand **Inspect RTSP** action on detected port 554/8554 devices. You can enter a specific relative RTSP path (default: `/`) and, optionally, your camera's username and password. It sends OPTIONS and DESCRIBE, handles a single RFC-style MD5/MD5-sess Digest challenge and retry, and reports response codes plus SDP codecs when advertised.
+- Ocularium **never guesses stream paths or passwords**. Credentials are held in memory only for the one inspection, the password field clears on submission, and neither usernames nor passwords are written into the report or registry. If a device uses a different Digest algorithm, the app reports that limitation rather than falling back to insecure Basic authentication.
 - Displays found IPs, detected services, advertised ONVIF addresses/scopes, SSDP headers, and Linux neighbor-table MACs when available.
 - Distinguishes confirmed protocol responses from **possible camera** classifications.
 - Supports cancellation, filtering by metadata, and a copyable report. Nothing is uploaded externally.
@@ -46,9 +47,9 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 - MAC addresses are best-effort on Linux; manufacturer lookup requires an existing local vendor database, such as `/usr/share/hwdata/oui.txt`, `/usr/share/ieee-data/oui.txt`, or `/usr/share/nmap/nmap-mac-prefixes`. Missing vendor data is non-fatal. Do not install paid software.
 - mDNS can be blocked by multicast filtering or socket conflicts; scan warnings explain failures.
 - HTTP titles or RTSP port presence are only identification clues, never proof of accessible video.
-- Camera access credentials, verified playback, recording, snapshots, and MCP are later milestones.
+- Valid credential discovery, credential persistence, actual RTP playback, recording, snapshots, and MCP are later milestones.
 - Even when RTSP returns an SDP description, this is **not** proof that RTP media packets can be received or decoded.
-- RTSP inspection tests only the root (`/`) path; 404 does not mean a camera cannot stream elsewhere. No redirects or authentication attempts are performed.
+- RTSP inspection tests only the path you enter (`/` by default); 404 does not mean a camera cannot stream elsewhere. Digest authentication is attempted only with both username and password explicitly entered. No redirects, defaults, brute force, or cloud access are attempted.
 
 ## Architecture
 
@@ -68,4 +69,4 @@ CI performs these checks on Linux. Real camera discovery requires manual testing
 
 ## Security
 
-Ocularium runs locally and stores no credentials in v0.1. Future streaming and MCP access must require deliberate authorization, with credentials held by the local application rather than returned to AI agents.
+Ocularium runs locally, and v0.1 does not persist credentials. Passwords entered for one RTSP inspection are sent only via the one-time Digest exchange (no Basic fallback) and cleared from the UI. Future streaming and MCP access must require deliberate authorization; credentials must remain unavailable to AI agents.
