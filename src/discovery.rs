@@ -483,10 +483,10 @@ fn probe_tcp(scope: &Scope, tx: &Sender<Event>, cancelled: &AtomicBool) {
                             if rtsp_options(stream, ip, port) {
                                 rtsp_responded = true;
                             }
-                        } else if (port == 80 || port == 8080 || port == 8000 || port == 5000)
-                            && let Some(info) = identify::http_hint(stream, ip, port)
-                        {
-                            let _ = tx.send(Event::Found(ip, Observation::Http(info)));
+                        } else if port == 80 || port == 8080 || port == 8000 || port == 5000 {
+                            if let Some(info) = identify::http_hint(stream, ip, port) {
+                                let _ = tx.send(Event::Found(ip, Observation::Http(info)));
+                            }
                         }
                         ports.push(port);
                     }
