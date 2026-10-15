@@ -40,7 +40,7 @@ impl Scope {
         )
     }
 
-    fn contains(&self, ip: Ipv4Addr) -> bool {
+    pub(crate) fn contains(&self, ip: Ipv4Addr) -> bool {
         ip.octets()[..3] == self.base[..]
     }
 
