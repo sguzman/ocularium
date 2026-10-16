@@ -15,6 +15,8 @@ use eframe::egui::{self, Color32, RichText};
 use crate::{
     classify::{self, DeviceCategory},
     discovery::{self, DeepReport, Device, Event, Scope},
+    dhcp::DhcpStore,
+    dns,
     history::{self, HistoryStore},
     registry::Registry,
     rtsp::{self, RtspInspection},
@@ -42,6 +44,9 @@ pub struct OculariumApp {
     status: String,
     registry: Registry,
     history: HistoryStore,
+    dhcp: DhcpStore,
+    dhcp_text: String,
+    dhcp_message: Option<String>,
     alias_edit: String,
     rtsp_path: String,
     rtsp_username: String,
@@ -67,6 +72,10 @@ impl OculariumApp {
         if let Some(warning) = history_warning {
             messages.push(warning);
         }
+        let (dhcp, dhcp_warning) = DhcpStore::load();
+        if let Some(warning) = dhcp_warning {
+            messages.push(warning);
+        }
         Self {
             scopes,
             selected_scope: 0,
@@ -86,6 +95,9 @@ impl OculariumApp {
             status: "Ready to scan".into(),
             registry,
             history,
+            dhcp,
+            dhcp_text: String::new(),
+            dhcp_message: None,
             alias_edit: String::new(),
             rtsp_path: "/".into(),
             rtsp_username: String::new(),
