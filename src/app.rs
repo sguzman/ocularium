@@ -14,8 +14,8 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::{
     classify::{self, DeviceCategory},
-    discovery::{self, DeepReport, Device, Event, Scope},
     dhcp::DhcpStore,
+    discovery::{self, DeepReport, Device, Event, Scope},
     dns,
     history::{self, HistoryStore},
     registry::Registry,
@@ -291,9 +291,11 @@ impl OculariumApp {
         }
         if let Some(scope) = self.scopes.get(self.selected_scope) {
             if let Some(snapshot) = self.dhcp.snapshot(scope) {
-                let _ = writeln!(report,
+                let _ = writeln!(
+                    report,
                     "Imported DHCP inventory: {} leases · imported {} · {} unmatched",
-                    snapshot.clients.len(), history::display_time(snapshot.imported_at),
+                    snapshot.clients.len(),
+                    history::display_time(snapshot.imported_at),
                     self.dhcp.unmatched(scope, &self.devices).len(),
                 );
             }
@@ -314,10 +316,12 @@ impl OculariumApp {
             }
             if let Some(scope) = self.scopes.get(self.selected_scope) {
                 if let Some((lease, matched_by)) = self.dhcp.match_device(scope, device) {
-                    let _ = writeln!(report,
+                    let _ = writeln!(
+                        report,
                         "  Router DHCP: name={} · IP={} · {}",
                         lease.name.as_deref().unwrap_or("-"),
-                        lease.ip, matched_by.description(),
+                        lease.ip,
+                        matched_by.description(),
                     );
                 }
             }
@@ -425,7 +429,9 @@ impl OculariumApp {
                         snapshot.clients.len(),
                         self.dhcp.unmatched(scope, &self.devices).len(),
                         history::display_time(snapshot.imported_at),
-                    )).color(MUTED).small()
+                    ))
+                    .color(MUTED)
+                    .small(),
                 );
             }
             if let Some(scan) = self.history.latest_scan(scope) {
@@ -568,7 +574,9 @@ impl OculariumApp {
                         .alias(d)
                         .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
-                    || self.scopes.get(self.selected_scope)
+                    || self
+                        .scopes
+                        .get(self.selected_scope)
                         .and_then(|scope| self.dhcp.match_device(scope, d))
                         .and_then(|(lease, _)| lease.name.as_deref())
                         .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
@@ -897,8 +905,11 @@ impl OculariumApp {
                         ui.label(format!("Lease time at import: {time}"));
                     }
                     ui.label(
-                        RichText::new("This imported lease is not proof the device is online or a camera.")
-                            .color(MUTED).small()
+                        RichText::new(
+                            "This imported lease is not proof the device is online or a camera.",
+                        )
+                        .color(MUTED)
+                        .small(),
                     );
                 });
             }
