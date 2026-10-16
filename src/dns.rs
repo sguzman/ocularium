@@ -136,7 +136,7 @@ fn parse_reply(packet: &[u8], id: u16, ip: Ipv4Addr) -> Option<Vec<String>> {
         return None;
     }
     let flags = read_u16(packet, 2)?;
-    if flags & 0x8000 == 0 || flags & 0x0200 != 0 || flags & 0x000f != 0 {
+    if flags & 0x8000 == 0 || flags & 0x0200 != 0 || !matches!(flags & 0x000f, 0 | 3) {
         return None;
     }
     let questions = usize::from(read_u16(packet, 4)?);
@@ -188,7 +188,8 @@ fn lookup(ip: Ipv4Addr, router: Ipv4Addr, local_ip: Ipv4Addr, cancelled: &Atomic
     }
     let socket = UdpSocket::bind((local_ip, 0)).ok()?;
     socket.set_read_timeout(Some(TIMEOUT)).ok()?;
-    let id = u16::from_be_bytes([uuid::Uuid::new_v4().as_bytes()[0], uuid::Uuid::new_v4().as_bytes()[1]]);
+    let uuid = uuid::Uuid::new_v4();
+    let id = u16::from_be_bytes([uuid.as_bytes()[0], uuid.as_bytes()[1]]);
     socket.send_to(&make_query(ip, id), SocketAddrV4::new(router, 53)).ok()?;
     let mut buffer = [0u8; 2048];
     // Ignore unrelated packets, while respecting the bounded socket timeout.

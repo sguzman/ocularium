@@ -293,7 +293,10 @@ impl OculariumApp {
                 let _ = writeln!(report, "  mDNS: {service}");
             }
             for name in &device.mdns_names {
-                let _ = writeln!(report, "  Hostname: {name}");
+                let _ = writeln!(report, "  mDNS hostname: {name}");
+            }
+            for name in &device.router_dns_names {
+                let _ = writeln!(report, "  Local router DNS hostname: {name}");
             }
             for text in &device.mdns_txt {
                 let _ = writeln!(report, "  TXT: {text}");
@@ -343,10 +346,11 @@ impl OculariumApp {
         });
         if let Some(deep) = &self.deep_report {
             ui.label(RichText::new(deep.summary()).color(MUTED).small());
-            if deep.open_ports == 0 && deep.reverse_mdns_hosts == 0 && !deep.cancelled {
+            if deep.open_ports == 0 && deep.reverse_mdns_hosts == 0
+                && deep.router_dns.named == 0 && !deep.cancelled {
                 ui.label(
                     RichText::new(
-                        "No additional services answered. This does not rule out outbound-only or cloud-managed cameras.",
+                        "No new port or hostname evidence. This does not rule out outbound-only or cloud-managed cameras.",
                     )
                     .color(MUTED)
                     .small(),
@@ -476,6 +480,7 @@ impl OculariumApp {
                     || d.vendor
                         .as_deref()
                         .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
+                    || d.router_dns_names.iter().any(|value| value.to_ascii_lowercase().contains(&needle))
                     || d.mdns_names
                         .iter()
                         .chain(d.mdns_services.iter())
@@ -575,6 +580,7 @@ impl OculariumApp {
                                     info.model.as_deref().or(info.friendly_name.as_deref())
                                 })
                                 .or_else(|| d.mdns_names.first().map(String::as_str))
+                                .or_else(|| d.router_dns_names.first().map(String::as_str))
                                 .unwrap_or("-");
                             ui.label(description);
                             ui.end_row();
@@ -761,6 +767,7 @@ impl OculariumApp {
         }
         for (heading, values) in [
             ("mDNS hostnames", &device.mdns_names),
+            ("Local router DNS names", &device.router_dns_names),
             ("mDNS services", &device.mdns_services),
             ("mDNS device metadata", &device.mdns_txt),
             ("ONVIF device services", &device.onvif_xaddrs),

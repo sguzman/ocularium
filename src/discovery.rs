@@ -16,6 +16,7 @@ use std::{
 use if_addrs::{get_if_addrs, IfAddr};
 
 use crate::{
+    dns::{self, DnsReport},
     identify::{self, HttpInfo, VendorRegistry},
     identity::{AdvertisedEndpoint, IdentityInfo},
     mdns,
@@ -162,6 +163,7 @@ pub enum Observation {
     Vendor(String),
     Http(HttpInfo),
     Identity(IdentityInfo),
+    RouterDns(String),
     Mdns {
         names: Vec<String>,
         services: Vec<String>,
@@ -185,6 +187,7 @@ pub struct DeepReport {
     pub tcp_attempts: usize,
     pub open_ports: usize,
     pub reverse_mdns_hosts: usize,
+    pub router_dns: DnsReport,
     pub cancelled: bool,
 }
 
@@ -196,8 +199,9 @@ impl DeepReport {
             "finished"
         };
         format!(
-            "Deep scan {state}: {} hosts, {} TCP checks, {} open ports, {} reverse-mDNS hostname responders",
-            self.hosts_scanned, self.tcp_attempts, self.open_ports, self.reverse_mdns_hosts
+            "Deep scan {state}: {} hosts, {} TCP checks, {} open ports, {} reverse-mDNS hostname responders; {}",
+            self.hosts_scanned, self.tcp_attempts, self.open_ports, self.reverse_mdns_hosts,
+            self.router_dns.summary()
         )
     }
 }
@@ -210,6 +214,7 @@ pub struct Device {
     pub http: Vec<HttpInfo>,
     pub identities: Vec<IdentityInfo>,
     pub mdns_names: Vec<String>,
+    pub router_dns_names: Vec<String>,
     pub mdns_services: Vec<String>,
     pub mdns_txt: Vec<String>,
     pub onvif_xaddrs: Vec<String>,
@@ -231,6 +236,7 @@ impl Device {
             http: Vec::new(),
             identities: Vec::new(),
             mdns_names: Vec::new(),
+            router_dns_names: Vec::new(),
             mdns_services: Vec::new(),
             mdns_txt: Vec::new(),
             onvif_xaddrs: Vec::new(),
@@ -287,6 +293,7 @@ impl Device {
                     self.identities.push(info);
                 }
             }
+            Observation::RouterDns(name) => merge_unique(&mut self.router_dns_names, vec![name]),
             Observation::Mac(mac) => self.mac = Some(mac),
             Observation::Vendor(vendor) => self.vendor = Some(vendor),
             Observation::Http(info) => {
@@ -681,12 +688,19 @@ pub fn deep_scan(
             }
         }
     };
+    let router_dns = if cancelled.load(Ordering::Relaxed) {
+        DnsReport::default()
+    } else {
+        let _ = tx.send(Event::Status("Checking local router DNS for device names".into()));
+        dns::probe(&scope, &targets, &tx, &cancelled)
+    };
     let was_cancelled = cancelled.load(Ordering::Relaxed);
     let _ = tx.send(Event::DeepReport(DeepReport {
         hosts_scanned: completed.load(Ordering::Relaxed),
         tcp_attempts: attempts.load(Ordering::Relaxed),
         open_ports: open_ports.load(Ordering::Relaxed),
         reverse_mdns_hosts,
+        router_dns,
         cancelled: was_cancelled,
     }));
     let _ = tx.send(Event::Finished {
@@ -736,11 +750,12 @@ mod tests {
             tcp_attempts: 135,
             open_ports: 0,
             reverse_mdns_hosts: 0,
+            router_dns: DnsReport::default(),
             cancelled: false,
         };
         assert_eq!(
             report.summary(),
-            "Deep scan finished: 9 hosts, 135 TCP checks, 0 open ports, 0 reverse-mDNS hostname responders"
+            "Deep scan finished: 9 hosts, 135 TCP checks, 0 open ports, 0 reverse-mDNS hostname responders; Router DNS: no on-subnet default gateway found"
         );
     }
 

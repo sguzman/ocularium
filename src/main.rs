@@ -1,6 +1,7 @@
 mod app;
 mod classify;
 mod discovery;
+mod dns;
 mod identify;
 mod identity;
 mod mdns;

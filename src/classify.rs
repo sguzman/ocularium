@@ -211,15 +211,19 @@ pub fn classify(device: &Device) -> Classification {
     if let Some(info) = device.http.iter().find(|info| {
         info.title
             .as_deref()
-            .is_some_and(|title| title.to_ascii_lowercase().contains("calibre library"))
+            .is_some_and(|title| {
+                let title = title.to_ascii_lowercase();
+                title.contains("calibre library") || title.contains("caliberate library")
+            })
     }) {
         return Classification::new(
             IdentifiedEquipment,
-            "Calibre service",
+            "Library web service",
             ServiceAdvertisement,
             format!(
-                "HTTP title on port {} identifies Calibre Library",
-                info.port
+                "HTTP title on port {} identifies the library application: {}",
+                info.port,
+                info.title.as_deref().unwrap_or("unknown"),
             ),
         );
     }
@@ -289,6 +293,20 @@ mod tests {
         assert_eq!(result.level, EvidenceLevel::DeviceDescription);
         assert!(!result.camera_candidate());
         assert!(result.reason.contains("InternetGatewayDevice"));
+    }
+
+    #[test]
+    fn preserves_caliberate_name_without_assuming_calibre() {
+        let mut d = device();
+        d.apply(Observation::Http(crate::identify::HttpInfo {
+            port: 8080,
+            server: None,
+            realm: None,
+            title: Some("Caliberate Library".into()),
+        }));
+        let classification = classify(&d);
+        assert_eq!(classification.label, "Library web service");
+        assert!(classification.reason.contains("Caliberate Library"));
     }
 
     #[test]
