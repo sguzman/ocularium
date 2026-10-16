@@ -15,6 +15,7 @@ use eframe::egui::{self, Color32, RichText};
 use crate::{
     classify::{self, DeviceCategory},
     discovery::{self, DeepReport, Device, Event, Scope},
+    history::{self, HistoryStore},
     registry::Registry,
     rtsp::{self, RtspInspection},
 };
@@ -40,6 +41,7 @@ pub struct OculariumApp {
     messages: Vec<String>,
     status: String,
     registry: Registry,
+    history: HistoryStore,
     alias_edit: String,
     rtsp_path: String,
     rtsp_username: String,
@@ -61,6 +63,10 @@ impl OculariumApp {
         if let Some(warning) = registry_warning {
             messages.push(warning);
         }
+        let (history, history_warning) = HistoryStore::load();
+        if let Some(warning) = history_warning {
+            messages.push(warning);
+        }
         Self {
             scopes,
             selected_scope: 0,
@@ -79,6 +85,7 @@ impl OculariumApp {
             messages,
             status: "Ready to scan".into(),
             registry,
+            history,
             alias_edit: String::new(),
             rtsp_path: "/".into(),
             rtsp_username: String::new(),
@@ -169,6 +176,20 @@ impl OculariumApp {
                         }
                     }
                     Ok(Event::Finished { cancelled }) => {
+                        // Only a completed full scan counts as a new
+                        // historical sighting. Never mistake a cancelled or
+                        // targeted deep scan for a complete network snapshot.
+                        if !cancelled && !self.deep_scanning {
+                            if let Some(scope) = self.scopes.get(self.selected_scope) {
+                                if let Err(error) = self.history.record_completed_scan(
+                                    scope,
+                                    &self.devices,
+                                    HistoryStore::now(),
+                                ) {
+                                    self.messages.push(format!("History not saved: {error}"));
+                                }
+                            }
+                        }
                         self.scanning = false;
                         self.status = match (self.deep_scanning, cancelled) {
                             (true, true) => "Deep scan cancelled".into(),
@@ -246,6 +267,16 @@ impl OculariumApp {
         if let Some(deep) = &self.deep_report {
             let _ = writeln!(report, "{}", deep.summary());
         }
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(scan) = self.history.latest_scan(scope) {
+                let _ = writeln!(report,
+                    "Saved history: last completed {} | observed {} | newly observed {} | IP changes {} | not observed {}",
+                    history::display_time(scan.timestamp),
+                    scan.found, scan.first_seen, scan.ip_changes,
+                    self.history.not_seen(scope).len(),
+                );
+            }
+        }
         for device in self.devices.values() {
             let _ = writeln!(
                 report,
@@ -259,6 +290,17 @@ impl OculariumApp {
             );
             if let Some(alias) = self.registry.alias(device) {
                 let _ = writeln!(report, "  User label: {alias}");
+            }
+            if let Some(scope) = self.scopes.get(self.selected_scope) {
+                if let Some(record) = self.history.record(scope, device) {
+                    let _ = writeln!(report,
+                        "  History: {} completed scans | first {} | last {} | IPs {:?}",
+                        record.seen_scans,
+                        history::display_time(record.first_seen),
+                        history::display_time(record.last_seen),
+                        record.ips,
+                    );
+                }
             }
             for info in self
                 .inspections
@@ -344,6 +386,20 @@ impl OculariumApp {
                 ui.ctx().copy_text(self.export_report());
             }
         });
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(scan) = self.history.latest_scan(scope) {
+                let missing = self.history.not_seen(scope).len();
+                ui.label(
+                    RichText::new(format!(
+                        "Saved scan: {} · {} new · {} IP changes · {} not observed this scan",
+                        history::display_time(scan.timestamp),
+                        scan.first_seen, scan.ip_changes, missing,
+                    ))
+                    .color(MUTED)
+                    .small(),
+                );
+            }
+        }
         if let Some(deep) = &self.deep_report {
             ui.label(RichText::new(deep.summary()).color(MUTED).small());
             if deep.open_ports == 0
@@ -594,6 +650,68 @@ impl OculariumApp {
             });
     }
 
+    fn history_panel(&self, ui: &mut egui::Ui) {
+        let Some(scope) = self.scopes.get(self.selected_scope) else {
+            return;
+        };
+        let known = self.history.known_count(scope);
+        if known == 0 {
+            return;
+        }
+        ui.separator();
+        ui.collapsing(format!("Saved device history ({known} known in this network)"), |ui| {
+            ui.label(RichText::new(
+                "Historical observations only. A device missing from a scan is not necessarily offline."
+            ).color(MUTED).small());
+            let missing = self.history.not_seen(scope);
+            if let Some(latest) = self.history.latest_scan(scope) {
+                ui.label(format!(
+                    "Latest completed scan: {} · {} observed · {} new · {} IP changes",
+                    history::display_time(latest.timestamp),
+                    latest.found, latest.first_seen, latest.ip_changes,
+                ));
+            }
+            if !missing.is_empty() {
+                ui.strong(format!(
+                    "{} previously known devices not observed in latest completed scan:",
+                    missing.len()
+                ));
+                for record in missing.iter().take(30) {
+                    let ip = record.ips.last().map(ToString::to_string)
+                        .unwrap_or_else(|| "-".into());
+                    ui.label(format!(
+                        "{ip} · {} · last observed {} ({} scans)",
+                        record.label_hint.as_deref().unwrap_or(&record.last_classification),
+                        history::display_time(record.last_seen),
+                        record.seen_scans,
+                    ));
+                }
+                if missing.len() > 30 {
+                    ui.label(format!("... and {} more", missing.len() - 30));
+                }
+            } else {
+                ui.label("Every previously recorded device was observed in the latest completed scan.");
+            }
+            ui.collapsing("All recorded devices", |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("historical_devices")
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for record in self.history.entries_for_scope(scope) {
+                            let ip = record.ips.last().map(ToString::to_string)
+                                .unwrap_or_else(|| "-".into());
+                            ui.label(format!(
+                                "{ip} · {} · {} sightings · last {}",
+                                record.label_hint.as_deref().unwrap_or(&record.last_classification),
+                                record.seen_scans,
+                                history::display_time(record.last_seen),
+                            ));
+                        }
+                    });
+            });
+        });
+    }
+
     fn details_panel(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Device details");
@@ -624,6 +742,20 @@ impl OculariumApp {
                 }
             }
         });
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(record) = self.history.record(scope, &device) {
+                ui.label(format!(
+                    "History: {} completed scans · first observed {} · last observed {}",
+                    record.seen_scans,
+                    history::display_time(record.first_seen),
+                    history::display_time(record.last_seen),
+                ));
+                if record.ips.len() > 1 {
+                    let addresses: Vec<_> = record.ips.iter().map(ToString::to_string).collect();
+                    ui.label(format!("IP addresses observed: {}", addresses.join(", ")));
+                }
+            }
+        }
         let classified = classify::classify(&device);
         ui.label(RichText::new(format!("Classification: {}", classified.label)).strong());
         ui.label(format!("Evidence level: {}", classified.level.label()));
@@ -816,6 +948,7 @@ impl eframe::App for OculariumApp {
                 ui.add_space(12.0);
                 self.devices_panel(ui);
                 self.details_panel(ui);
+                self.history_panel(ui);
                 ui.add_space(12.0);
                 ui.label(
                     RichText::new(

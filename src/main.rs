@@ -4,6 +4,7 @@ mod discovery;
 mod dns;
 mod identify;
 mod identity;
+mod history;
 mod mdns;
 mod registry;
 mod rtsp;
