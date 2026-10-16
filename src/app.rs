@@ -289,6 +289,15 @@ impl OculariumApp {
                 );
             }
         }
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(snapshot) = self.dhcp.snapshot(scope) {
+                let _ = writeln!(report,
+                    "Imported DHCP inventory: {} leases · imported {} · {} unmatched",
+                    snapshot.clients.len(), history::display_time(snapshot.imported_at),
+                    self.dhcp.unmatched(scope, &self.devices).len(),
+                );
+            }
+        }
         for device in self.devices.values() {
             let _ = writeln!(
                 report,
@@ -302,6 +311,15 @@ impl OculariumApp {
             );
             if let Some(alias) = self.registry.alias(device) {
                 let _ = writeln!(report, "  User label: {alias}");
+            }
+            if let Some(scope) = self.scopes.get(self.selected_scope) {
+                if let Some((lease, matched_by)) = self.dhcp.match_device(scope, device) {
+                    let _ = writeln!(report,
+                        "  Router DHCP: name={} · IP={} · {}",
+                        lease.name.as_deref().unwrap_or("-"),
+                        lease.ip, matched_by.description(),
+                    );
+                }
             }
             if let Some(scope) = self.scopes.get(self.selected_scope) {
                 if let Some(record) = self.history.record(scope, device) {
@@ -400,6 +418,16 @@ impl OculariumApp {
             }
         });
         if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(snapshot) = self.dhcp.snapshot(scope) {
+                ui.label(
+                    RichText::new(format!(
+                        "Imported router DHCP: {} leases · {} not matched · imported {}",
+                        snapshot.clients.len(),
+                        self.dhcp.unmatched(scope, &self.devices).len(),
+                        history::display_time(snapshot.imported_at),
+                    )).color(MUTED).small()
+                );
+            }
             if let Some(scan) = self.history.latest_scan(scope) {
                 let missing = self.history.not_seen(scope).len();
                 ui.label(
