@@ -12,7 +12,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{classify, discovery::{Device, Scope}};
+use crate::{
+    classify,
+    discovery::{Device, Scope},
+};
 
 const FORMAT_VERSION: u32 = 1;
 const MAX_ENTRIES: usize = 1024;
@@ -75,14 +78,15 @@ pub fn scope_id(scope: &Scope) -> String {
 
 fn valid_mac(mac: &str) -> Option<String> {
     let parts: Vec<&str> = mac.split(':').collect();
-    if parts.len() != 6 || !parts.iter().all(|part| {
-        part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit())
-    }) {
+    if parts.len() != 6
+        || !parts
+            .iter()
+            .all(|part| part.len() == 2 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         return None;
     }
     let canonical = parts.join(":").to_ascii_lowercase();
-    (canonical != "00:00:00:00:00:00" && canonical != "ff:ff:ff:ff:ff:ff")
-        .then_some(canonical)
+    (canonical != "00:00:00:00:00:00" && canonical != "ff:ff:ff:ff:ff:ff").then_some(canonical)
 }
 
 fn identity(scope: &Scope, device: &Device) -> String {
@@ -94,7 +98,9 @@ fn identity(scope: &Scope, device: &Device) -> String {
 }
 
 fn name_hint(device: &Device) -> Option<String> {
-    device.identities.iter()
+    device
+        .identities
+        .iter()
         .find_map(|id| id.friendly_name.as_deref().or(id.model.as_deref()))
         .or_else(|| device.router_dns_names.first().map(String::as_str))
         .or_else(|| device.mdns_names.first().map(String::as_str))
@@ -126,21 +132,36 @@ impl HistoryStore {
                 Ok(mut state) => {
                     state.read_only = true;
                     let version = state.version;
-                    (state, Some(format!(
+                    (
+                        state,
+                        Some(format!(
                         "Unsupported history format v{version}; history is read-only until upgraded"
-                    )))
+                    )),
+                    )
                 }
                 Err(error) => {
-                    let state = Self { read_only: true, ..Self::default() };
-                    (state, Some(format!(
-                        "Could not parse device history; refusing to overwrite it: {error}"
-                    )))
+                    let state = Self {
+                        read_only: true,
+                        ..Self::default()
+                    };
+                    (
+                        state,
+                        Some(format!(
+                            "Could not parse device history; refusing to overwrite it: {error}"
+                        )),
+                    )
                 }
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => (Self::default(), None),
             Err(error) => {
-                let state = Self { read_only: true, ..Self::default() };
-                (state, Some(format!("Cannot read device history (read-only): {error}")))
+                let state = Self {
+                    read_only: true,
+                    ..Self::default()
+                };
+                (
+                    state,
+                    Some(format!("Cannot read device history (read-only): {error}")),
+                )
             }
         }
     }
@@ -152,14 +173,19 @@ impl HistoryStore {
 
     pub fn known_count(&self, scope: &Scope) -> usize {
         let scope = scope_id(scope);
-        self.entries.values().filter(|entry| entry.scope == scope).count()
+        self.entries
+            .values()
+            .filter(|entry| entry.scope == scope)
+            .count()
     }
 
     pub fn not_seen(&self, scope: &Scope) -> Vec<&DeviceHistory> {
         let Some(latest) = self.latest_scan(scope) else {
             return Vec::new();
         };
-        let mut missing: Vec<_> = self.entries.values()
+        let mut missing: Vec<_> = self
+            .entries
+            .values()
             .filter(|entry| entry.scope == latest.scope && entry.last_scan_id != latest.id)
             .collect();
         missing.sort_by_key(|entry| std::cmp::Reverse(entry.last_seen));
@@ -177,8 +203,10 @@ impl HistoryStore {
         timestamp: u64,
     ) -> io::Result<ScanHistory> {
         if self.read_only {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied,
-                "History file is read-only; existing data was left unchanged"));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "History file is read-only; existing data was left unchanged",
+            ));
         }
         let mut updated = self.clone();
         let scan = updated.ingest_completed_scan(scope, devices, timestamp);
@@ -233,26 +261,31 @@ impl HistoryStore {
             } else {
                 new_count += 1;
                 visited.insert(key.clone());
-                self.entries.insert(key.clone(), DeviceHistory {
-                    scope: scope_name.clone(),
-                    identity: key,
-                    first_seen: timestamp,
-                    last_seen: timestamp,
-                    seen_scans: 1,
-                    last_scan_id: id,
-                    mac,
-                    ips: vec![device.ip],
-                    vendor: device.vendor.clone(),
-                    label_hint: label,
-                    last_classification: class,
-                });
+                self.entries.insert(
+                    key.clone(),
+                    DeviceHistory {
+                        scope: scope_name.clone(),
+                        identity: key,
+                        first_seen: timestamp,
+                        last_seen: timestamp,
+                        seen_scans: 1,
+                        last_scan_id: id,
+                        mac,
+                        ips: vec![device.ip],
+                        vendor: device.vendor.clone(),
+                        label_hint: label,
+                        last_classification: class,
+                    },
+                );
             }
         }
 
         // A bounded history avoids turning long-running desktop usage into an
         // unbounded, secretly growing database.
         while self.entries.len() > MAX_ENTRIES {
-            if let Some(oldest) = self.entries.iter()
+            if let Some(oldest) = self
+                .entries
+                .iter()
                 .min_by_key(|(_, value)| (value.last_seen, value.first_seen))
                 .map(|(key, _)| key.clone())
             {
@@ -260,9 +293,12 @@ impl HistoryStore {
             }
         }
         let scan = ScanHistory {
-            id, scope: scope_name,
-            timestamp, found: devices.len(),
-            first_seen: new_count, ip_changes: changed_count,
+            id,
+            scope: scope_name,
+            timestamp,
+            found: devices.len(),
+            first_seen: new_count,
+            ip_changes: changed_count,
         };
         self.scans.push(scan.clone());
         if self.scans.len() > MAX_SCANS {
@@ -273,7 +309,9 @@ impl HistoryStore {
 
     pub fn entries_for_scope(&self, scope: &Scope) -> Vec<&DeviceHistory> {
         let scope_name = scope_id(scope);
-        let mut rows: Vec<_> = self.entries.values()
+        let mut rows: Vec<_> = self
+            .entries
+            .values()
             .filter(|entry| entry.scope == scope_name)
             .collect();
         rows.sort_by_key(|entry| std::cmp::Reverse(entry.last_seen));
@@ -284,9 +322,9 @@ impl HistoryStore {
         let path = file_path().ok_or_else(|| {
             io::Error::new(io::ErrorKind::NotFound, "Cannot resolve history directory")
         })?;
-        let directory = path.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "Invalid history path")
-        })?;
+        let directory = path
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid history path"))?;
         fs::create_dir_all(directory)?;
         let data = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         let temp_path = path.with_extension("json.tmp");
@@ -295,15 +333,21 @@ impl HistoryStore {
     }
 
     pub fn now() -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH)
-            .unwrap_or_default().as_secs()
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 }
 
 pub fn display_time(seconds: u64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp(seconds as i64, 0)
-        .map(|value| value.with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M").to_string())
+        .map(|value| {
+            value
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
         .unwrap_or_else(|| "Unknown".to_owned())
 }
 
@@ -321,12 +365,15 @@ mod tests {
     }
 
     fn with_devices(items: &[(&str, Option<&str>)]) -> BTreeMap<Ipv4Addr, Device> {
-        items.iter().map(|(ip, mac)| {
-            let address: Ipv4Addr = ip.parse().unwrap();
-            let mut device = Device::new(address);
-            device.mac = mac.map(str::to_owned);
-            (address, device)
-        }).collect()
+        items
+            .iter()
+            .map(|(ip, mac)| {
+                let address: Ipv4Addr = ip.parse().unwrap();
+                let mut device = Device::new(address);
+                device.mac = mac.map(str::to_owned);
+                (address, device)
+            })
+            .collect()
     }
 
     #[test]
@@ -337,7 +384,9 @@ mod tests {
         history.ingest_completed_scan(&scope(), &first, 100);
         let scan_two = history.ingest_completed_scan(&scope(), &second, 200);
         assert_eq!(scan_two.ip_changes, 1);
-        let record = history.record(&scope(), second.values().next().unwrap()).unwrap();
+        let record = history
+            .record(&scope(), second.values().next().unwrap())
+            .unwrap();
         assert_eq!(record.first_seen, 100);
         assert_eq!(record.last_seen, 200);
         assert_eq!(record.seen_scans, 2);

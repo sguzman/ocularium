@@ -293,7 +293,8 @@ impl OculariumApp {
             }
             if let Some(scope) = self.scopes.get(self.selected_scope) {
                 if let Some(record) = self.history.record(scope, device) {
-                    let _ = writeln!(report,
+                    let _ = writeln!(
+                        report,
                         "  History: {} completed scans | first {} | last {} | IPs {:?}",
                         record.seen_scans,
                         history::display_time(record.first_seen),
@@ -393,7 +394,9 @@ impl OculariumApp {
                     RichText::new(format!(
                         "Saved scan: {} · {} new · {} IP changes · {} not observed this scan",
                         history::display_time(scan.timestamp),
-                        scan.first_seen, scan.ip_changes, missing,
+                        scan.first_seen,
+                        scan.ip_changes,
+                        missing,
                     ))
                     .color(MUTED)
                     .small(),
