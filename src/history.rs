@@ -162,7 +162,7 @@ impl HistoryStore {
         let mut missing: Vec<_> = self.entries.values()
             .filter(|entry| entry.scope == latest.scope && entry.last_scan_id != latest.id)
             .collect();
-        missing.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        missing.sort_by_key(|entry| std::cmp::Reverse(entry.last_seen));
         missing
     }
 
@@ -276,7 +276,7 @@ impl HistoryStore {
         let mut rows: Vec<_> = self.entries.values()
             .filter(|entry| entry.scope == scope_name)
             .collect();
-        rows.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        rows.sort_by_key(|entry| std::cmp::Reverse(entry.last_seen));
         rows
     }
 
