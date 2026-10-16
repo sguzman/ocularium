@@ -64,6 +64,12 @@ fn parse_default_gateway(table: &str, scope: &Scope) -> Option<Ipv4Addr> {
         .map(|(_, ip)| ip)
 }
 
+/// The selected interface's configured on-subnet gateway, when available.
+pub fn local_gateway(scope: &Scope) -> Option<Ipv4Addr> {
+    let routes = fs::read_to_string("/proc/net/route").ok()?;
+    parse_default_gateway(&routes, scope)
+}
+
 fn reverse_name(ip: Ipv4Addr) -> String {
     let [a, b, c, d] = ip.octets();
     format!("{d}.{c}.{b}.{a}.in-addr.arpa")
