@@ -568,6 +568,10 @@ impl OculariumApp {
                         .alias(d)
                         .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
+                    || self.scopes.get(self.selected_scope)
+                        .and_then(|scope| self.dhcp.match_device(scope, d))
+                        .and_then(|(lease, _)| lease.name.as_deref())
+                        .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.identities.iter().any(|info| {
                         [
                             info.friendly_name.as_deref(),
@@ -632,6 +636,7 @@ impl OculariumApp {
                     .show(ui, |ui| {
                         ui.strong("IP address");
                         ui.strong("Label");
+                        ui.strong("DHCP name");
                         ui.strong("Classification");
                         ui.strong("Evidence");
                         ui.strong("Ports");
@@ -654,6 +659,18 @@ impl OculariumApp {
                                 self.rtsp_password.clear();
                             }
                             ui.label(self.registry.alias(d).unwrap_or("-"));
+                            let match_info = self.scopes.get(self.selected_scope)
+                                .and_then(|scope| self.dhcp.match_device(scope, d));
+                            let name = match_info.as_ref()
+                                .and_then(|(lease, _)| lease.name.as_deref())
+                                .unwrap_or("-");
+                            ui.label(name).on_hover_text(match_info.map_or_else(
+                                || "No matching imported DHCP lease".to_owned(),
+                                |(_, how)| format!(
+                                    "Router DHCP inventory: {}; client names are only identity clues",
+                                    how.description()
+                                )
+                            ));
                             let classified = classify::classify(d);
                             let color = match classified.category {
                                 DeviceCategory::CameraCandidate => HIGHLIGHT,
