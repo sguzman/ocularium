@@ -884,6 +884,24 @@ impl OculariumApp {
             }
         });
         if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some((lease, matched_by)) = self.dhcp.match_device(scope, &device) {
+                ui.group(|ui| {
+                    ui.strong("Imported router DHCP lease");
+                    ui.label(format!(
+                        "Client name: {}",
+                        lease.name.as_deref().unwrap_or("Unnamed")
+                    ));
+                    ui.label(format!("Lease IP: {} · MAC: {}", lease.ip, lease.mac));
+                    ui.label(format!("Match type: {}", matched_by.description()));
+                    if let Some(time) = &lease.lease_time {
+                        ui.label(format!("Lease time at import: {time}"));
+                    }
+                    ui.label(
+                        RichText::new("This imported lease is not proof the device is online or a camera.")
+                            .color(MUTED).small()
+                    );
+                });
+            }
             if let Some(record) = self.history.record(scope, &device) {
                 ui.label(format!(
                     "History: {} completed scans · first observed {} · last observed {}",
