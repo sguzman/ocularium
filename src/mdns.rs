@@ -2,6 +2,7 @@
 //! Read-only service enumeration; no credentials and no external connections.
 use socket2::{Domain, Protocol, Socket, Type};
 use std::{
+    collections::HashSet,
     io,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket},
     sync::{
@@ -87,6 +88,11 @@ fn be_u16(bytes: &[u8], offset: usize) -> Option<u16> {
     ]))
 }
 
+fn reverse_label(ip: Ipv4Addr) -> String {
+    let [a, b, c, d] = ip.octets();
+    format!("{d}.{c}.{b}.{a}.in-addr.arpa")
+}
+
 fn relevant_service(name: &str) -> bool {
     name.to_ascii_lowercase().contains("._tcp.local")
         || name.to_ascii_lowercase().contains("._udp.local")
@@ -132,11 +138,17 @@ pub fn parse_packet(packet: &[u8], origin: Ipv4Addr) -> Option<MdnsInfo> {
             12 => {
                 let mut position = cursor;
                 if let Some(name) = read_name(packet, &mut position) {
-                    if relevant_service(&owner) {
-                        push_unique(&mut info.services, owner);
-                    }
-                    if relevant_service(&name) {
-                        push_unique(&mut info.services, name);
+                    if owner.eq_ignore_ascii_case(&reverse_label(origin))
+                        && name.to_ascii_lowercase().ends_with(".local")
+                    {
+                        push_unique(&mut info.names, name.chars().take(140).collect());
+                    } else {
+                        if relevant_service(&owner) {
+                            push_unique(&mut info.services, owner);
+                        }
+                        if relevant_service(&name) {
+                            push_unique(&mut info.services, name);
+                        }
                     }
                 }
             }
@@ -185,6 +197,59 @@ fn query_packet(service: &str) -> Vec<u8> {
     packet.extend_from_slice(&12u16.to_be_bytes()); // PTR
     packet.extend_from_slice(&1u16.to_be_bytes()); // IN
     packet
+}
+
+/// Reverse mDNS PTR requests are optional hostname hints, not hardware
+/// identification. Queries stay multicast on the selected LAN and response
+/// sources must match the already-seen devices.
+pub fn probe_reverse(
+    scope: &Scope,
+    hosts: &[Ipv4Addr],
+    tx: &Sender<Event>,
+    cancelled: &AtomicBool,
+) -> io::Result<usize> {
+    if hosts.is_empty() || cancelled.load(Ordering::Relaxed) {
+        return Ok(0);
+    }
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    socket.set_reuse_address(true)?;
+    socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, PORT).into())?;
+    socket.join_multicast_v4(&MULTICAST, &scope.local_ip)?;
+    socket.set_multicast_if_v4(&scope.local_ip)?;
+    let socket: UdpSocket = socket.into();
+    socket.set_read_timeout(Some(Duration::from_millis(160)))?;
+
+    let allowed: HashSet<Ipv4Addr> = hosts.iter().copied()
+        .filter(|ip| scope.contains(*ip) && *ip != scope.local_ip)
+        .take(64).collect();
+    for ip in &allowed {
+        if cancelled.load(Ordering::Relaxed) {
+            break;
+        }
+        socket.send_to(&query_packet(&reverse_label(*ip)), (MULTICAST, PORT))?;
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut buffer = [0u8; 9000];
+    let mut named_hosts = HashSet::new();
+    while Instant::now() < deadline && !cancelled.load(Ordering::Relaxed) {
+        if let Ok((n, SocketAddr::V4(source))) = socket.recv_from(&mut buffer) {
+            let ip = *source.ip();
+            if !allowed.contains(&ip) {
+                continue;
+            }
+            if let Some(info) = parse_packet(&buffer[..n], ip) {
+                if !info.names.is_empty() {
+                    named_hosts.insert(ip);
+                    let _ = tx.send(Event::Found(
+                        ip,
+                        Observation::Mdns { names: info.names, services: info.services, txt: info.txt },
+                    ));
+                }
+            }
+        }
+    }
+    Ok(named_hosts.len())
 }
 
 /// Observe responders only within the selected /24. Multicast sockets share
@@ -238,6 +303,24 @@ mod tests {
             buf.extend_from_slice(part.as_bytes());
         }
         buf.push(0);
+    }
+
+    #[test]
+    fn reverse_ptr_is_attributed_to_matching_source_only() {
+        let ip = Ipv4Addr::new(192, 168, 0, 103);
+        let mut packet = vec![0, 0, 0x84, 0, 0, 0, 0, 1, 0, 0, 0, 0];
+        name(&mut packet, &reverse_label(ip));
+        packet.extend_from_slice(&12u16.to_be_bytes());
+        packet.extend_from_slice(&1u16.to_be_bytes());
+        packet.extend_from_slice(&60u32.to_be_bytes());
+        let mut target = Vec::new();
+        name(&mut target, "lobby-camera.local");
+        packet.extend_from_slice(&(target.len() as u16).to_be_bytes());
+        packet.extend_from_slice(&target);
+        let valid = parse_packet(&packet, ip).unwrap();
+        assert_eq!(valid.names, vec!["lobby-camera.local"]);
+        let mismatch = parse_packet(&packet, Ipv4Addr::new(192, 168, 0, 104)).unwrap();
+        assert!(mismatch.names.is_empty());
     }
 
     #[test]
