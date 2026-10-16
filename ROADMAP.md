@@ -36,6 +36,10 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
 - [x] Persistent local history of completed full scans with first/last observed, sighting counts, historical IPs and per-scope scan summaries
+- [x] Opt-in TP-Link DHCP client list import from copied table rows; no router admin password handling
+- [x] Correlate imported router leases with live discovery by MAC (IP fallback only if no MAC), and show unmatched DHCP clients separately
+- [x] Persist bounded per-network DHCP snapshots locally and expose names with provenance in device details and copied reports
+- [ ] Evaluate a documented read-only router integration if the specific firmware exposes a supported interface; no guessed/private authenticated endpoints
 - [x] Explicit `not observed on latest completed scan` UX, without claiming an absent device is offline
 - [x] Versioned bounded XDG history storage; cancelled and deep scans do not manufacture full-scan sightings
 - [x] Evidence-based classification: advertised gateways, media servers, printers, Calibre services, camera candidates and unidentified devices
