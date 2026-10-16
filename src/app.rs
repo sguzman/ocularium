@@ -853,7 +853,11 @@ impl OculariumApp {
             return;
         };
         ui.separator();
-        let state = if self.watch_running { "running" } else { "stopped" };
+        let state = if self.watch_running {
+            "running"
+        } else {
+            "stopped"
+        };
         ui.collapsing(format!(
             "Kernel neighbor observation ({state}, {} IPs seen)",
             watch.observed_total()
@@ -1001,9 +1005,11 @@ impl OculariumApp {
                             "not in last cache sample (not necessarily offline)"
                         },
                     ));
-                    if device.mac.as_deref().is_some_and(|mac| {
-                        !mac.eq_ignore_ascii_case(&record.mac)
-                    }) {
+                    if device
+                        .mac
+                        .as_deref()
+                        .is_some_and(|mac| !mac.eq_ignore_ascii_case(&record.mac))
+                    {
                         ui.colored_label(
                             Color32::from_rgb(239, 190, 100),
                             "Neighbor-cache MAC differs from this scan; check for an IP change or stale discovery",

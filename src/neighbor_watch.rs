@@ -41,33 +41,35 @@ pub fn parse_neighbors(data: &str, scope: &Scope) -> Vec<Neighbor> {
         if !scope.contains(ip) || ip == scope.local_ip {
             continue;
         }
-        let flags = u32::from_str_radix(columns[2].trim_start_matches("0x"), 16)
-            .unwrap_or(0);
+        let flags = u32::from_str_radix(columns[2].trim_start_matches("0x"), 16).unwrap_or(0);
         if flags & 0x2 == 0 {
             continue;
         }
         let mac = columns[3].to_ascii_lowercase();
-        if mac == "00:00:00:00:00:00"
-            || mac == "ff:ff:ff:ff:ff:ff"
-            || !valid_mac(&mac)
-        {
+        if mac == "00:00:00:00:00:00" || mac == "ff:ff:ff:ff:ff:ff" || !valid_mac(&mac) {
             continue;
         }
         found.insert(ip, mac);
     }
-    found.into_iter().map(|(ip, mac)| Neighbor { ip, mac }).collect()
+    found
+        .into_iter()
+        .map(|(ip, mac)| Neighbor { ip, mac })
+        .collect()
 }
 
 fn valid_mac(mac: &str) -> bool {
     let bytes: Vec<&str> = mac.split(':').collect();
-    bytes.len() == 6 && bytes.iter().all(|segment| {
-        segment.len() == 2 && segment.bytes().all(|b| b.is_ascii_hexdigit())
-    })
+    bytes.len() == 6
+        && bytes
+            .iter()
+            .all(|segment| segment.len() == 2 && segment.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 fn timestamp() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH)
-        .unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[derive(Clone, Debug)]
@@ -129,9 +131,12 @@ impl NeighborWatch {
                         }
                     }
                     Err(error) => {
-                        if tx.send(Event::Warning(format!(
-                            "Neighbor cache unavailable: {error}"
-                        ))).is_err() {
+                        if tx
+                            .send(Event::Warning(format!(
+                                "Neighbor cache unavailable: {error}"
+                            )))
+                            .is_err()
+                        {
                             return;
                         }
                     }
@@ -197,7 +202,9 @@ impl NeighborWatch {
         self.last_warning = None;
 
         let now: HashSet<_> = sample.neighbors.iter().map(|value| value.ip).collect();
-        let disappeared: Vec<_> = self.observations.values()
+        let disappeared: Vec<_> = self
+            .observations
+            .values()
             .filter(|entry| entry.in_cache && !now.contains(&entry.ip))
             .map(|entry| entry.ip)
             .collect();
@@ -221,7 +228,10 @@ impl NeighborWatch {
                     let old_mac = std::mem::replace(&mut entry.mac, neighbor.mac.clone());
                     self.push_change(
                         sample.taken_at,
-                        format!("{} neighbor MAC changed: {} -> {}", neighbor.ip, old_mac, neighbor.mac),
+                        format!(
+                            "{} neighbor MAC changed: {} -> {}",
+                            neighbor.ip, old_mac, neighbor.mac
+                        ),
                     );
                 } else if returned {
                     self.push_change(
@@ -243,7 +253,10 @@ impl NeighborWatch {
                 );
                 self.push_change(
                     sample.taken_at,
-                    format!("{} first seen in kernel neighbor cache ({})", neighbor.ip, neighbor.mac),
+                    format!(
+                        "{} first seen in kernel neighbor cache ({})",
+                        neighbor.ip, neighbor.mac
+                    ),
                 );
             }
         }
@@ -271,10 +284,13 @@ mod tests {
     fn sample(at: u64, items: &[(&str, &str)]) -> Sample {
         Sample {
             taken_at: at,
-            neighbors: items.iter().map(|(ip, mac)| Neighbor {
-                ip: ip.parse().unwrap(),
-                mac: (*mac).to_string(),
-            }).collect(),
+            neighbors: items
+                .iter()
+                .map(|(ip, mac)| Neighbor {
+                    ip: ip.parse().unwrap(),
+                    mac: (*mac).to_string(),
+                })
+                .collect(),
         }
     }
 
@@ -287,10 +303,13 @@ mod tests {
 172.31.0.2 0x1 0x2 12:34:56:78:90:ab * eno1\n\
 192.168.0.53 0x1 0x2 12:34:56:78:90:ab * eno1\n";
         let parsed = parse_neighbors(raw, &scope());
-        assert_eq!(parsed, vec![Neighbor {
-            ip: Ipv4Addr::new(192, 168, 0, 100),
-            mac: "aa:bb:cc:dd:ee:ff".into(),
-        }]);
+        assert_eq!(
+            parsed,
+            vec![Neighbor {
+                ip: Ipv4Addr::new(192, 168, 0, 100),
+                mac: "aa:bb:cc:dd:ee:ff".into(),
+            }]
+        );
     }
 
     #[test]
@@ -300,8 +319,18 @@ mod tests {
         watch.apply_sample(sample(100, &[("192.168.0.100", "aa:bb:cc:dd:ee:ff")]));
         watch.apply_sample(sample(110, &[]));
         assert_eq!(watch.observed_total(), 1);
-        assert!(!watch.seen("192.168.0.100".parse().unwrap()).unwrap().in_cache);
-        assert!(watch.changes.last().unwrap().detail.contains("not necessarily offline"));
+        assert!(
+            !watch
+                .seen("192.168.0.100".parse().unwrap())
+                .unwrap()
+                .in_cache
+        );
+        assert!(watch
+            .changes
+            .last()
+            .unwrap()
+            .detail
+            .contains("not necessarily offline"));
         watch.apply_sample(sample(120, &[("192.168.0.100", "aa:bb:cc:dd:ee:ff")]));
         assert!(watch.changes.last().unwrap().detail.contains("reappeared"));
     }
