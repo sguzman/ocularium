@@ -710,6 +710,87 @@ impl OculariumApp {
             });
     }
 
+    fn dhcp_panel(&mut self, ui: &mut egui::Ui) {
+        let Some(scope) = self.scopes.get(self.selected_scope).cloned() else {
+            return;
+        };
+        ui.separator();
+        ui.collapsing("Router DHCP inventory", |ui| {
+            ui.label(
+                RichText::new(
+                    "Paste DHCP client rows from your router's administration page. Ocularium never asks for or stores the router login."
+                ).color(MUTED).small(),
+            );
+            if let Some(gateway) = dns::local_gateway(&scope) {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("Gateway: {gateway}"));
+                    ui.hyperlink_to("Open router admin", format!("http://{gateway}/"));
+                    if ui.button("Copy router IP").clicked() {
+                        ui.ctx().copy_text(gateway.to_string());
+                    }
+                });
+            } else {
+                ui.label("No gateway detected for the selected interface.");
+            }
+            ui.label("TP-Link: DHCP > DHCP Clients List. Copy the rows with client name, MAC, assigned IP and lease time. Tabs, spaces or CSV are accepted.");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.dhcp_text)
+                    .hint_text("1   Camera-Example   AA-BB-CC-DD-EE-FF   192.168.0.100   00:30:00")
+                    .desired_rows(5),
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Import DHCP table").clicked() {
+                    match self.dhcp.import(&scope, &self.dhcp_text) {
+                        Ok(parsed) => {
+                            self.dhcp_message = Some(format!(
+                                "Imported {} leases; {} out-of-subnet rows skipped, {} unrecognized rows.",
+                                parsed.clients.len(),
+                                parsed.skipped_out_of_subnet,
+                                parsed.rejected_rows,
+                            ));
+                            self.dhcp_text.clear();
+                        }
+                        Err(error) => self.dhcp_message = Some(error),
+                    }
+                }
+                if ui.button("Clear pasted text").clicked() {
+                    self.dhcp_text.clear();
+                }
+            });
+            if let Some(message) = &self.dhcp_message {
+                ui.label(message);
+            }
+            if let Some(snapshot) = self.dhcp.snapshot(&scope) {
+                ui.label(format!(
+                    "Imported {} · {} leases",
+                    history::display_time(snapshot.imported_at),
+                    snapshot.clients.len(),
+                ));
+                let unmatched = self.dhcp.unmatched(&scope, &self.devices);
+                ui.strong(format!(
+                    "{} DHCP clients without a matching current scan device",
+                    unmatched.len()
+                ));
+                ui.label(
+                    RichText::new(
+                        "DHCP leases are historical router records. An unmatched client is not proof of a currently connected camera."
+                    ).color(MUTED).small(),
+                );
+                egui::ScrollArea::vertical().id_salt("unmatched_dhcp")
+                    .max_height(220.0).show(ui, |ui| {
+                        for client in unmatched {
+                            ui.label(format!(
+                                "{} · {} · {}",
+                                client.ip,
+                                client.name.as_deref().unwrap_or("Unnamed"),
+                                client.mac,
+                            ));
+                        }
+                    });
+            }
+        });
+    }
+
     fn history_panel(&self, ui: &mut egui::Ui) {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
@@ -1008,6 +1089,7 @@ impl eframe::App for OculariumApp {
                 ui.add_space(12.0);
                 self.devices_panel(ui);
                 self.details_panel(ui);
+                self.dhcp_panel(ui);
                 self.history_panel(ui);
                 ui.add_space(12.0);
                 ui.label(
