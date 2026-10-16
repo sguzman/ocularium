@@ -25,8 +25,8 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Sends a UPnP/SSDP M-SEARCH multicast probe (UDP 1900).
 - Uses interface-bound mDNS multicast to discover advertised RTSP, ONVIF, and related services (UDP 5353).
 - Checks selected TCP service ports across the chosen local /24 using bounded workers.
-- Offers **Deep scan unknown** after a normal scan: checks 15 additional service ports only on previously discovered unidentified devices in the selected /24 (maximum 64 hosts, at most 8 concurrent workers). It also sends reverse-IP mDNS PTR queries on the selected local network, which can reveal hostnames from devices that support them. This is optional, cancellable, and uses no passwords or external services.
-- The completed deep scan reports how many hosts and TCP ports it checked, how many additional ports answered, and how many distinct hosts returned reverse-mDNS names. Zero responses are reported explicitly instead of suggesting cameras were found.
+- Offers **Deep scan unknown** after a normal scan: checks 15 additional service ports only on previously discovered unidentified devices in the selected /24 (maximum 64 hosts, at most 8 concurrent workers). It also sends reverse-IP mDNS PTR queries on the selected local network, which can reveal hostnames from devices that support them. It also sends bounded DNS PTR queries to the selected interface's on-subnet default gateway, which may expose names from router DHCP leases if that router provides local reverse DNS. This is optional, cancellable, and uses no passwords or external services.
+- The completed deep scan reports how many hosts and TCP ports it checked, how many additional ports answered, how many distinct hosts returned reverse-mDNS names, and the local-router DNS server, query count, response count, and hostname count. Zero responses are reported explicitly instead of suggesting cameras were found.
 - Performs a light RTSP OPTIONS handshake on responding RTSP ports.
 - Reads limited unauthenticated HTTP headers and HTML titles from selected open local ports; no credentials, redirects, or cloud access.
 - **Automatically enriches self-advertised device descriptions:** after network discovery, fetches a bounded number of SSDP/UPnP XML documents and ONVIF `GetDeviceInformation` SOAP responses. It extracts friendly names, manufacturers, models, device types, and firmware when freely available, and shows their source separately from the MAC vendor.
@@ -37,7 +37,7 @@ Ocularium is a native application; it needs **no server**, no cloud login, and n
 - Ocularium **never guesses stream paths or passwords**. Credentials are held in memory only for the one inspection, the password field clears on submission, and neither usernames nor passwords are written into the report or registry. If a device uses a different Digest algorithm, the app reports that limitation rather than falling back to insecure Basic authentication.
 - Displays found IPs, detected services, advertised ONVIF addresses/scopes, SSDP headers, and Linux neighbor-table MACs when available.
 - Distinguishes confirmed protocol responses from **possible camera** classifications.
-- Identifies additional *advertised services*, including AirPlay, Cast, workstation, SFTP, and Matter via mDNS. These are evidence of available services, not proof of a particular device's model or exclusion of other functions.
+- Identifies additional *advertised services*, including AirPlay, Cast, workstation, SFTP, and Matter via mDNS. Identifies HTTP library services from their actual advertised titles (including Caliberate Library) without guessing which physical device runs them. These are evidence of available services, not proof of a particular device's model or exclusion of other functions.
 - Supports cancellation, filtering by metadata, and a copyable report. Nothing is uploaded externally.
 
 This is a discovery tool, **not** a vulnerability scanner: no password guessing, RTSP path brute forcing, unauthorized credential extraction, or exploitation. Scan networks you own or are authorized to administer.
@@ -52,7 +52,7 @@ This is a discovery tool, **not** a vulnerability scanner: no password guessing,
 - Cloud-only cameras may appear as generic TCP devices or not appear at all.
 - A reachable TCP port or RTSP handshake does **not** prove a playable video stream.
 - Deep scan only checks the already-discovered unidentified hosts. It cannot discover a completely unseen, cloud-only camera on a blocked subnet; even an open unusual port remains a tentative camera hint.
-- Reverse-mDNS hostnames are optional and often absent. A hostname is a clue, not proof of the hardware brand or model, and the reverse-mDNS count is the number of responding hosts, not necessarily new camera discoveries.
+- Reverse-mDNS and router DNS hostnames are optional and often absent. The router may not provide PTR records even when its DHCP lease list has device names; a router may also forward DNS queries upstream depending on its configuration. A hostname is a clue, not proof of the hardware brand or model, and the reverse-mDNS count is the number of responding hosts, not necessarily new camera discoveries.
 - MAC addresses are best-effort on Linux; manufacturer lookup requires an existing local vendor database, such as `/usr/share/hwdata/oui.txt`, `/usr/share/ieee-data/oui.txt`, or `/usr/share/nmap/nmap-mac-prefixes`. Missing vendor data is non-fatal. Do not install paid software.
 - mDNS can be blocked by multicast filtering or socket conflicts; scan warnings explain failures.
 - HTTP titles or RTSP port presence are only identification clues, never proof of accessible video.
