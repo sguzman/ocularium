@@ -14,7 +14,7 @@ use eframe::egui::{self, Color32, RichText};
 
 use crate::{
     classify::{self, DeviceCategory},
-    discovery::{self, Device, Event, Scope},
+    discovery::{self, DeepReport, Device, Event, Scope},
     registry::Registry,
     rtsp::{self, RtspInspection},
 };
@@ -31,6 +31,7 @@ pub struct OculariumApp {
     cancelled: Option<Arc<AtomicBool>>,
     scanning: bool,
     deep_scanning: bool,
+    deep_report: Option<DeepReport>,
     completed: usize,
     total: usize,
     camera_only: bool,
@@ -69,6 +70,7 @@ impl OculariumApp {
             cancelled: None,
             scanning: false,
             deep_scanning: false,
+            deep_report: None,
             completed: 0,
             total: 253,
             camera_only: false,
@@ -107,6 +109,7 @@ impl OculariumApp {
         self.status = format!("Scanning {}", scope.description());
         self.scanning = true;
         self.deep_scanning = false;
+        self.deep_report = None;
         let (tx, rx) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancelled);
@@ -133,6 +136,7 @@ impl OculariumApp {
         self.total = targets.len();
         self.scanning = true;
         self.deep_scanning = true;
+        self.deep_report = None;
         let (tx, rx) = mpsc::channel();
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancel = Arc::clone(&cancelled);
@@ -153,6 +157,9 @@ impl OculariumApp {
                             .apply(observation);
                     }
                     Ok(Event::Status(message)) => self.status = message,
+                    Ok(Event::DeepReport(report)) => {
+                        self.deep_report = Some(report);
+                    },
                     Ok(Event::Progress(completed)) => {
                         self.completed = self.completed.max(completed);
                     }
@@ -236,6 +243,9 @@ impl OculariumApp {
                 .filter(|d| d.is_camera_candidate())
                 .count(),
         );
+        if let Some(deep) = &self.deep_report {
+            let _ = writeln!(report, "{}", deep.summary());
+        }
         for device in self.devices.values() {
             let _ = writeln!(
                 report,
@@ -331,6 +341,18 @@ impl OculariumApp {
                 ui.ctx().copy_text(self.export_report());
             }
         });
+        if let Some(deep) = &self.deep_report {
+            ui.label(RichText::new(deep.summary()).color(MUTED).small());
+            if deep.open_ports == 0 && deep.reverse_mdns_hosts == 0 && !deep.cancelled {
+                ui.label(
+                    RichText::new(
+                        "No additional services answered. This does not rule out outbound-only or cloud-managed cameras.",
+                    )
+                    .color(MUTED)
+                    .small(),
+                );
+            }
+        }
     }
 
     fn discovery_controls(&mut self, ui: &mut egui::Ui) {
@@ -552,6 +574,7 @@ impl OculariumApp {
                                 .find_map(|info| {
                                     info.model.as_deref().or(info.friendly_name.as_deref())
                                 })
+                                .or_else(|| d.mdns_names.first().map(String::as_str))
                                 .unwrap_or("-");
                             ui.label(description);
                             ui.end_row();
