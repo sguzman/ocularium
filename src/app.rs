@@ -159,7 +159,7 @@ impl OculariumApp {
                     Ok(Event::Status(message)) => self.status = message,
                     Ok(Event::DeepReport(report)) => {
                         self.deep_report = Some(report);
-                    },
+                    }
                     Ok(Event::Progress(completed)) => {
                         self.completed = self.completed.max(completed);
                     }

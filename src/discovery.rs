@@ -190,7 +190,11 @@ pub struct DeepReport {
 
 impl DeepReport {
     pub fn summary(&self) -> String {
-        let state = if self.cancelled { "cancelled" } else { "finished" };
+        let state = if self.cancelled {
+            "cancelled"
+        } else {
+            "finished"
+        };
         format!(
             "Deep scan {state}: {} hosts, {} TCP checks, {} open ports, {} reverse-mDNS hostname responders",
             self.hosts_scanned, self.tcp_attempts, self.open_ports, self.reverse_mdns_hosts
@@ -685,7 +689,9 @@ pub fn deep_scan(
         reverse_mdns_hosts,
         cancelled: was_cancelled,
     }));
-    let _ = tx.send(Event::Finished { cancelled: was_cancelled });
+    let _ = tx.send(Event::Finished {
+        cancelled: was_cancelled,
+    });
 }
 
 fn rtsp_options(mut stream: TcpStream, ip: Ipv4Addr, port: u16) -> bool {

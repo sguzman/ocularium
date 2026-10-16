@@ -219,9 +219,12 @@ pub fn probe_reverse(
     let socket: UdpSocket = socket.into();
     socket.set_read_timeout(Some(Duration::from_millis(160)))?;
 
-    let allowed: HashSet<Ipv4Addr> = hosts.iter().copied()
+    let allowed: HashSet<Ipv4Addr> = hosts
+        .iter()
+        .copied()
         .filter(|ip| scope.contains(*ip) && *ip != scope.local_ip)
-        .take(64).collect();
+        .take(64)
+        .collect();
     for ip in &allowed {
         if cancelled.load(Ordering::Relaxed) {
             break;
@@ -243,7 +246,11 @@ pub fn probe_reverse(
                     named_hosts.insert(ip);
                     let _ = tx.send(Event::Found(
                         ip,
-                        Observation::Mdns { names: info.names, services: info.services, txt: info.txt },
+                        Observation::Mdns {
+                            names: info.names,
+                            services: info.services,
+                            txt: info.txt,
+                        },
                     ));
                 }
             }
