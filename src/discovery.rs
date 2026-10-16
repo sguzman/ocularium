@@ -691,7 +691,9 @@ pub fn deep_scan(
     let router_dns = if cancelled.load(Ordering::Relaxed) {
         DnsReport::default()
     } else {
-        let _ = tx.send(Event::Status("Checking local router DNS for device names".into()));
+        let _ = tx.send(Event::Status(
+            "Checking local router DNS for device names".into(),
+        ));
         dns::probe(&scope, &targets, &tx, &cancelled)
     };
     let was_cancelled = cancelled.load(Ordering::Relaxed);

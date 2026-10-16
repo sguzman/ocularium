@@ -346,8 +346,11 @@ impl OculariumApp {
         });
         if let Some(deep) = &self.deep_report {
             ui.label(RichText::new(deep.summary()).color(MUTED).small());
-            if deep.open_ports == 0 && deep.reverse_mdns_hosts == 0
-                && deep.router_dns.named == 0 && !deep.cancelled {
+            if deep.open_ports == 0
+                && deep.reverse_mdns_hosts == 0
+                && deep.router_dns.named == 0
+                && !deep.cancelled
+            {
                 ui.label(
                     RichText::new(
                         "No new port or hostname evidence. This does not rule out outbound-only or cloud-managed cameras.",
@@ -480,7 +483,9 @@ impl OculariumApp {
                     || d.vendor
                         .as_deref()
                         .is_some_and(|s| s.to_ascii_lowercase().contains(&needle))
-                    || d.router_dns_names.iter().any(|value| value.to_ascii_lowercase().contains(&needle))
+                    || d.router_dns_names
+                        .iter()
+                        .any(|value| value.to_ascii_lowercase().contains(&needle))
                     || d.mdns_names
                         .iter()
                         .chain(d.mdns_services.iter())

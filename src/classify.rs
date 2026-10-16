@@ -209,12 +209,10 @@ pub fn classify(device: &Device) -> Classification {
     // Identifiable software running on a host does not establish the hardware
     // model.  Describe it as a service, not a physical device.
     if let Some(info) = device.http.iter().find(|info| {
-        info.title
-            .as_deref()
-            .is_some_and(|title| {
-                let title = title.to_ascii_lowercase();
-                title.contains("calibre library") || title.contains("caliberate library")
-            })
+        info.title.as_deref().is_some_and(|title| {
+            let title = title.to_ascii_lowercase();
+            title.contains("calibre library") || title.contains("caliberate library")
+        })
     }) {
         return Classification::new(
             IdentifiedEquipment,

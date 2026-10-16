@@ -40,25 +40,28 @@ impl DnsReport {
 }
 
 fn parse_default_gateway(table: &str, scope: &Scope) -> Option<Ipv4Addr> {
-    table.lines().skip(1).filter_map(|line| {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        if fields.len() < 8 || fields[0] != scope.interface || fields[1] != "00000000" {
-            return None;
-        }
-        let flags = u32::from_str_radix(fields[3], 16).ok()?;
-        if flags & 0x3 != 0x3 {
-            return None;
-        }
-        let raw = u32::from_str_radix(fields[2], 16).ok()?;
-        let gateway = Ipv4Addr::from(raw.to_le_bytes());
-        if gateway == scope.local_ip || !scope.contains(gateway) {
-            return None;
-        }
-        let metric = fields[6].parse::<u32>().ok()?;
-        Some((metric, gateway))
-    })
-    .min_by_key(|(metric, _)| *metric)
-    .map(|(_, ip)| ip)
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            if fields.len() < 8 || fields[0] != scope.interface || fields[1] != "00000000" {
+                return None;
+            }
+            let flags = u32::from_str_radix(fields[3], 16).ok()?;
+            if flags & 0x3 != 0x3 {
+                return None;
+            }
+            let raw = u32::from_str_radix(fields[2], 16).ok()?;
+            let gateway = Ipv4Addr::from(raw.to_le_bytes());
+            if gateway == scope.local_ip || !scope.contains(gateway) {
+                return None;
+            }
+            let metric = fields[6].parse::<u32>().ok()?;
+            Some((metric, gateway))
+        })
+        .min_by_key(|(metric, _)| *metric)
+        .map(|(_, ip)| ip)
 }
 
 fn reverse_name(ip: Ipv4Addr) -> String {
@@ -168,7 +171,9 @@ fn parse_reply(packet: &[u8], id: u16, ip: Ipv4Addr) -> Option<Vec<String>> {
             if let Some(name) = decode_name(packet, &mut value_cursor) {
                 // PTR answers are just device-name clues; avoid storing
                 // garbage or oversized names from untrusted responses.
-                if value_cursor <= end && !name.is_empty() && name.len() <= 160
+                if value_cursor <= end
+                    && !name.is_empty()
+                    && name.len() <= 160
                     && !names.contains(&name)
                 {
                     names.push(name);
@@ -180,9 +185,12 @@ fn parse_reply(packet: &[u8], id: u16, ip: Ipv4Addr) -> Option<Vec<String>> {
     Some(names)
 }
 
-fn lookup(ip: Ipv4Addr, router: Ipv4Addr, local_ip: Ipv4Addr, cancelled: &AtomicBool)
-    -> Option<Option<String>>
-{
+fn lookup(
+    ip: Ipv4Addr,
+    router: Ipv4Addr,
+    local_ip: Ipv4Addr,
+    cancelled: &AtomicBool,
+) -> Option<Option<String>> {
     if cancelled.load(Ordering::Relaxed) {
         return None;
     }
@@ -190,7 +198,9 @@ fn lookup(ip: Ipv4Addr, router: Ipv4Addr, local_ip: Ipv4Addr, cancelled: &Atomic
     socket.set_read_timeout(Some(TIMEOUT)).ok()?;
     let uuid = uuid::Uuid::new_v4();
     let id = u16::from_be_bytes([uuid.as_bytes()[0], uuid.as_bytes()[1]]);
-    socket.send_to(&make_query(ip, id), SocketAddrV4::new(router, 53)).ok()?;
+    socket
+        .send_to(&make_query(ip, id), SocketAddrV4::new(router, 53))
+        .ok()?;
     let mut buffer = [0u8; 2048];
     // Ignore unrelated packets, while respecting the bounded socket timeout.
     for _ in 0..3 {
@@ -218,15 +228,21 @@ pub fn probe(
 ) -> DnsReport {
     let gateway_table = fs::read_to_string("/proc/net/route").unwrap_or_default();
     let router = parse_default_gateway(&gateway_table, scope);
-    let mut report = DnsReport { router, ..Default::default() };
+    let mut report = DnsReport {
+        router,
+        ..Default::default()
+    };
     let Some(router) = router else {
         return report;
     };
 
     let mut unique = HashSet::new();
-    let targets: VecDeque<_> = hosts.iter().copied()
+    let targets: VecDeque<_> = hosts
+        .iter()
+        .copied()
         .filter(|ip| scope.contains(*ip) && *ip != scope.local_ip && unique.insert(*ip))
-        .take(64).collect();
+        .take(64)
+        .collect();
     let total = targets.len();
     let queue = Arc::new(Mutex::new(targets));
     let queried = AtomicUsize::new(0);
@@ -285,7 +301,10 @@ mod tests {
         let routes = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n\
 eno1 00000000 0100A8C0 0003 0 0 100 00000000 0 0 0\n\
 br-abc 00000000 01001FAC 0003 0 0 50 00000000 0 0 0\n";
-        assert_eq!(parse_default_gateway(routes, &scope()), Some(Ipv4Addr::new(192, 168, 0, 1)));
+        assert_eq!(
+            parse_default_gateway(routes, &scope()),
+            Some(Ipv4Addr::new(192, 168, 0, 1))
+        );
     }
 
     #[test]
