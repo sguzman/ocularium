@@ -35,7 +35,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] User-controlled scan scope beyond /24 and configurable ports
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
-- [ ] Persistent historical scan inventory (without stale devices appearing online)
+- [x] Persistent local history of completed full scans with first/last observed, sighting counts, historical IPs and per-scope scan summaries
+- [x] Explicit `not observed on latest completed scan` UX, without claiming an absent device is offline
+- [x] Versioned bounded XDG history storage; cancelled and deep scans do not manufacture full-scan sightings
 - [x] Evidence-based classification: advertised gateways, media servers, printers, Calibre services, camera candidates and unidentified devices
 - [x] Explain why each classification was assigned; separate device descriptions, protocol responses, service advertisements and open-port hints
 - [x] Device inventory filters for camera candidates vs unidentified hardware (no manufacturer-based guessing)
