@@ -46,6 +46,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Explain why each classification was assigned; separate device descriptions, protocol responses, service advertisements and open-port hints
 - [x] Device inventory filters for camera candidates vs unidentified hardware (no manufacturer-based guessing)
 - [x] Conservative classification of AirPlay, Cast, workstation, SFTP and Matter advertisements from mDNS
+- [x] Opt-in, no-privilege Linux kernel ARP neighbor-cache observation, scoped to selected interface, with 10-second interval and explicit start/stop
+- [x] In-session bounded neighbor event log and cache-first/cache-last sightings, correlated with imported DHCP MAC names; no false online/offline claims
+- [ ] Persist passive neighbor observations across restarts (opt-in), keeping them distinct from completed active scans
 - [ ] Historical evidence tracking and multi-source confidence calibration
 
 ## Milestone 0.3 — View

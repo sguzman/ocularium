@@ -18,6 +18,7 @@ use crate::{
     discovery::{self, DeepReport, Device, Event, Scope},
     dns,
     history::{self, HistoryStore},
+    neighbor_watch::NeighborWatch,
     registry::Registry,
     rtsp::{self, RtspInspection},
 };
@@ -34,6 +35,8 @@ pub struct OculariumApp {
     cancelled: Option<Arc<AtomicBool>>,
     scanning: bool,
     deep_scanning: bool,
+    watch: Option<NeighborWatch>,
+    watch_running: bool,
     deep_report: Option<DeepReport>,
     completed: usize,
     total: usize,
@@ -85,6 +88,8 @@ impl OculariumApp {
             cancelled: None,
             scanning: false,
             deep_scanning: false,
+            watch: None,
+            watch_running: false,
             deep_report: None,
             completed: 0,
             total: 253,
@@ -165,6 +170,9 @@ impl OculariumApp {
     }
 
     fn poll(&mut self) {
+        if let Some(watch) = &mut self.watch {
+            watch.poll();
+        }
         let mut disconnected = false;
         if let Some(rx) = &self.receiver {
             loop {
@@ -278,6 +286,24 @@ impl OculariumApp {
         );
         if let Some(deep) = &self.deep_report {
             let _ = writeln!(report, "{}", deep.summary());
+        }
+        if let Some(watch) = &self.watch {
+            let _ = writeln!(
+                report,
+                "ARP cache observer ({}): {} samples · {} IPs observed · {} in latest cache sample. Not an online status.",
+                if self.watch_running { "running" } else { "stopped" },
+                watch.sample_count, watch.observed_total(), watch.latest_cache_count,
+            );
+            for record in watch.observations.values() {
+                let _ = writeln!(
+                    report,
+                    "  Neighbor {} MAC={} · first {} · last {} · samples {} · in last cache sample {}",
+                    record.ip, record.mac,
+                    history::display_time(record.first_seen),
+                    history::display_time(record.last_seen),
+                    record.samples, record.in_cache,
+                );
+            }
         }
         if let Some(scope) = self.scopes.get(self.selected_scope) {
             if let Some(scan) = self.history.latest_scan(scope) {
@@ -476,7 +502,7 @@ impl OculariumApp {
                 .map(Scope::description)
                 .unwrap_or_else(|| "No private IPv4 adapter".into());
             let names: Vec<String> = self.scopes.iter().map(Scope::description).collect();
-            ui.add_enabled_ui(!self.scanning, |ui| {
+            ui.add_enabled_ui(!self.scanning && !self.watch_running, |ui| {
                 egui::ComboBox::from_id_salt("network_scope")
                     .selected_text(selected)
                     .width(340.0)
@@ -533,6 +559,29 @@ impl OculariumApp {
                 );
                 let unit = if self.deep_scanning { "devices" } else { "addresses" };
                 ui.label(format!("{}/{} {unit}", self.completed, self.total));
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            if self.watch_running {
+                if ui.button("Stop neighbor observation").clicked() {
+                    if let Some(watch) = &self.watch {
+                        watch.stop();
+                    }
+                    self.watch_running = false;
+                }
+                ui.label(RichText::new("Reading local kernel neighbor cache every 10 seconds").color(HIGHLIGHT).small());
+            } else if ui
+                .add_enabled(!self.scanning && !self.scopes.is_empty(),
+                    egui::Button::new("Observe LAN neighbors"))
+                .on_hover_text(
+                    "No packet capture or active probing. Reads the Linux kernel ARP cache for the selected interface while Ocularium is open."
+                )
+                .clicked()
+            {
+                if let Some(scope) = self.scopes.get(self.selected_scope) {
+                    self.watch = Some(NeighborWatch::start(scope.clone()));
+                    self.watch_running = true;
+                }
             }
         });
     }
@@ -799,6 +848,73 @@ impl OculariumApp {
         });
     }
 
+    fn neighbor_panel(&self, ui: &mut egui::Ui) {
+        let Some(watch) = &self.watch else {
+            return;
+        };
+        ui.separator();
+        let state = if self.watch_running { "running" } else { "stopped" };
+        ui.collapsing(format!(
+            "Kernel neighbor observation ({state}, {} IPs seen)",
+            watch.observed_total()
+        ), |ui| {
+            ui.label(
+                RichText::new(
+                    "Reads the existing Linux ARP neighbor cache every 10 seconds. No sniffing, packets, credentials, or background daemon. This cache is incomplete, and entries can expire even when devices are connected. Ordinary network scans may populate it."
+                ).color(MUTED).small()
+            );
+            ui.label(format!(
+                "Scope: {} · samples: {} · in last cache sample: {}",
+                watch.scope().description(),
+                watch.sample_count,
+                watch.latest_cache_count,
+            ));
+            if let Some(at) = watch.last_sample {
+                ui.label(format!("Last successful observation: {}", history::display_time(at)));
+            }
+            if let Some(warning) = &watch.last_warning {
+                ui.colored_label(Color32::from_rgb(239, 190, 100), warning);
+            }
+            ui.collapsing("Observed neighbors", |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("kernel_neighbor_observations")
+                    .max_height(230.0)
+                    .show(ui, |ui| {
+                        for record in watch.observations.values() {
+                            let name = self.scopes.get(self.selected_scope)
+                                .and_then(|scope| self.dhcp.snapshot(scope))
+                                .and_then(|snapshot| snapshot.clients.iter()
+                                    .find(|client| client.mac.eq_ignore_ascii_case(&record.mac)))
+                                .and_then(|client| client.name.as_deref())
+                                .unwrap_or("-");
+                            ui.label(format!(
+                                "{} · {} · {} · {} samples · last {}",
+                                record.ip,
+                                name,
+                                if record.in_cache { "in cache" } else { "aged out of cache" },
+                                record.samples,
+                                history::display_time(record.last_seen),
+                            ));
+                        }
+                    });
+            });
+            ui.collapsing(format!("Changes (last {})", watch.changes.len()), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("kernel_neighbor_changes")
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for change in watch.changes.iter().rev() {
+                            ui.label(format!(
+                                "{} · {}",
+                                history::display_time(change.at),
+                                change.detail
+                            ));
+                        }
+                    });
+            });
+        });
+    }
+
     fn history_panel(&self, ui: &mut egui::Ui) {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
@@ -872,6 +988,30 @@ impl OculariumApp {
             ui.label(RichText::new("Select a device by clicking its IP address.").color(MUTED));
             return;
         };
+        if let Some(watch) = &self.watch {
+            if self.scopes.get(self.selected_scope) == Some(watch.scope()) {
+                if let Some(record) = watch.seen(device.ip) {
+                    ui.label(format!(
+                        "Neighbor-cache observation: last {} · {} samples · {}",
+                        history::display_time(record.last_seen),
+                        record.samples,
+                        if record.in_cache {
+                            "present in last cache sample"
+                        } else {
+                            "not in last cache sample (not necessarily offline)"
+                        },
+                    ));
+                    if device.mac.as_deref().is_some_and(|mac| {
+                        !mac.eq_ignore_ascii_case(&record.mac)
+                    }) {
+                        ui.colored_label(
+                            Color32::from_rgb(239, 190, 100),
+                            "Neighbor-cache MAC differs from this scan; check for an IP change or stale discovery",
+                        );
+                    }
+                }
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(RichText::new(device.ip.to_string()).monospace().strong());
             if ui.button("Copy IP").clicked() {
@@ -1095,7 +1235,7 @@ impl OculariumApp {
 impl eframe::App for OculariumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
-        if self.scanning || self.inspecting.is_some() {
+        if self.scanning || self.inspecting.is_some() || self.watch_running {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
@@ -1118,6 +1258,7 @@ impl eframe::App for OculariumApp {
                 ui.add_space(12.0);
                 self.devices_panel(ui);
                 self.details_panel(ui);
+                self.neighbor_panel(ui);
                 self.dhcp_panel(ui);
                 self.history_panel(ui);
                 ui.add_space(12.0);

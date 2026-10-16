@@ -161,6 +161,11 @@ impl NeighborWatch {
         &self.scope
     }
 
+    /// Stops sampling but retains this session's observations for inspection.
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
     pub fn poll(&mut self) {
         while let Ok(event) = self.receiver.try_recv() {
             match event {
