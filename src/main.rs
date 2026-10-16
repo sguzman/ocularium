@@ -1,6 +1,7 @@
 mod app;
 mod classify;
 mod discovery;
+mod dhcp;
 mod dns;
 mod history;
 mod identify;
