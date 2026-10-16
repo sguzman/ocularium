@@ -175,7 +175,27 @@ pub enum Event {
     Progress(usize),
     Status(String),
     Warning(String),
+    DeepReport(DeepReport),
     Finished { cancelled: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeepReport {
+    pub hosts_scanned: usize,
+    pub tcp_attempts: usize,
+    pub open_ports: usize,
+    pub reverse_mdns_hosts: usize,
+    pub cancelled: bool,
+}
+
+impl DeepReport {
+    pub fn summary(&self) -> String {
+        let state = if self.cancelled { "cancelled" } else { "finished" };
+        format!(
+            "Deep scan {state}: {} hosts, {} TCP checks, {} open ports, {} reverse-mDNS hostname responders",
+            self.hosts_scanned, self.tcp_attempts, self.open_ports, self.reverse_mdns_hosts
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -586,16 +606,21 @@ pub fn deep_scan(
 ) {
     let queue = deep_targets(&scope, hosts);
     let total = queue.len();
+    let targets: Vec<_> = queue.iter().copied().collect();
     let _ = tx.send(Event::Status(format!(
         "Deep scanning {total} unidentified devices"
     )));
     let jobs = Arc::new(Mutex::new(queue));
     let completed = AtomicUsize::new(0);
+    let attempts = AtomicUsize::new(0);
+    let open_ports = AtomicUsize::new(0);
     thread::scope(|pool| {
         for _ in 0..DEEP_WORKERS.min(total) {
             let jobs = Arc::clone(&jobs);
             let tx = tx.clone();
             let completed = &completed;
+            let attempts = &attempts;
+            let open_ports = &open_ports;
             let cancelled = Arc::clone(&cancelled);
             pool.spawn(move || loop {
                 if cancelled.load(Ordering::Relaxed) {
@@ -611,7 +636,9 @@ pub fn deep_scan(
                         break;
                     }
                     let address = SocketAddr::V4(SocketAddrV4::new(ip, port));
+                    attempts.fetch_add(1, Ordering::Relaxed);
                     if let Ok(stream) = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT) {
+                        open_ports.fetch_add(1, Ordering::Relaxed);
                         if [8555, 10554].contains(&port) {
                             rtsp_responded |= rtsp_options(stream, ip, port);
                         } else if [81, 88, 8001, 8081, 8088, 8090, 9000].contains(&port) {
@@ -636,9 +663,29 @@ pub fn deep_scan(
             });
         }
     });
-    let _ = tx.send(Event::Finished {
-        cancelled: cancelled.load(Ordering::Relaxed),
-    });
+    // This is a different discovery signal than the TCP probes: some
+    // mDNS-speaking devices answer reverse-IP hostname lookups.
+    let reverse_mdns_hosts = if cancelled.load(Ordering::Relaxed) {
+        0
+    } else {
+        let _ = tx.send(Event::Status("Requesting LAN mDNS hostnames".into()));
+        match mdns::probe_reverse(&scope, &targets, &tx, &cancelled) {
+            Ok(count) => count,
+            Err(err) => {
+                let _ = tx.send(Event::Warning(format!("Reverse mDNS: {err}")));
+                0
+            }
+        }
+    };
+    let was_cancelled = cancelled.load(Ordering::Relaxed);
+    let _ = tx.send(Event::DeepReport(DeepReport {
+        hosts_scanned: completed.load(Ordering::Relaxed),
+        tcp_attempts: attempts.load(Ordering::Relaxed),
+        open_ports: open_ports.load(Ordering::Relaxed),
+        reverse_mdns_hosts,
+        cancelled: was_cancelled,
+    }));
+    let _ = tx.send(Event::Finished { cancelled: was_cancelled });
 }
 
 fn rtsp_options(mut stream: TcpStream, ip: Ipv4Addr, port: u16) -> bool {
@@ -675,6 +722,21 @@ fn arp_neighbors(scope: &Scope) -> Vec<(Ipv4Addr, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deep_report_is_explicit_when_it_finds_nothing() {
+        let report = DeepReport {
+            hosts_scanned: 9,
+            tcp_attempts: 135,
+            open_ports: 0,
+            reverse_mdns_hosts: 0,
+            cancelled: false,
+        };
+        assert_eq!(
+            report.summary(),
+            "Deep scan finished: 9 hosts, 135 TCP checks, 0 open ports, 0 reverse-mDNS hostname responders"
+        );
+    }
 
     #[test]
     fn deep_scan_ignores_unrelated_subnets_and_limits_targets() {
