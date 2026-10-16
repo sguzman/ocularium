@@ -28,6 +28,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Best-effort offline OUI lookup using installed hwdata/ieee-data/nmap databases
 - [ ] Bundled vendor database or guided optional package installation
 - [x] User-triggered bounded deep scan of already-discovered unidentified hosts on 15 additional ports
+- [x] Reverse-mDNS PTR hostname queries limited to previously found devices on the selected LAN
+- [x] Deep-scan accounting for checked ports, open ports, and hostname responders, including zero-findings feedback
 - [ ] User-controlled scan scope beyond /24 and configurable ports
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
