@@ -19,7 +19,7 @@ use crate::discovery::{Event, Observation, Scope};
 const TIMEOUT: Duration = Duration::from_millis(450);
 const WORKERS: usize = 4;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DnsReport {
     pub router: Option<Ipv4Addr>,
     pub queried: usize,
