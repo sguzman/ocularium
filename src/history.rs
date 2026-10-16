@@ -44,7 +44,7 @@ pub struct ScanHistory {
     pub ip_changes: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryStore {
     version: u32,
     next_scan_id: u64,
@@ -68,7 +68,7 @@ impl Default for HistoryStore {
 
 pub fn scope_id(scope: &Scope) -> String {
     format!(
-        "{}:{}.{:}.{}.0/24",
+        "{}:{}.{}.{}.0/24",
         scope.interface, scope.base[0], scope.base[1], scope.base[2]
     )
 }
@@ -180,6 +180,21 @@ impl HistoryStore {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied,
                 "History file is read-only; existing data was left unchanged"));
         }
+        let mut updated = self.clone();
+        let scan = updated.ingest_completed_scan(scope, devices, timestamp);
+        updated.save()?;
+        *self = updated;
+        Ok(scan)
+    }
+
+    // Pure in-memory transition, also used by unit tests. Filesystem changes
+    // happen only after the updated snapshot is ready for atomic replacement.
+    fn ingest_completed_scan(
+        &mut self,
+        scope: &Scope,
+        devices: &BTreeMap<Ipv4Addr, Device>,
+        timestamp: u64,
+    ) -> ScanHistory {
         let scope_name = scope_id(scope);
         let id = self.next_scan_id;
         self.next_scan_id = self.next_scan_id.saturating_add(1);
@@ -253,8 +268,16 @@ impl HistoryStore {
         if self.scans.len() > MAX_SCANS {
             self.scans.drain(..self.scans.len() - MAX_SCANS);
         }
-        self.save()?;
-        Ok(scan)
+        scan
+    }
+
+    pub fn entries_for_scope(&self, scope: &Scope) -> Vec<&DeviceHistory> {
+        let scope_name = scope_id(scope);
+        let mut rows: Vec<_> = self.entries.values()
+            .filter(|entry| entry.scope == scope_name)
+            .collect();
+        rows.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        rows
     }
 
     fn save(&self) -> io::Result<()> {
@@ -311,10 +334,9 @@ mod tests {
         let mut history = HistoryStore::default();
         let first = with_devices(&[("192.168.0.100", Some("aa:bb:cc:dd:ee:ff"))]);
         let second = with_devices(&[("192.168.0.120", Some("AA:BB:CC:DD:EE:FF"))]);
-        let scan_one = history.record_completed_scan(&scope(), &first, 100);
-        // Saving uses HOME; test the pure mutation without touching the user's files.
-        assert!(scan_one.is_err() || scan_one.is_ok());
-        let _ = history.record_completed_scan(&scope(), &second, 200);
+        history.ingest_completed_scan(&scope(), &first, 100);
+        let scan_two = history.ingest_completed_scan(&scope(), &second, 200);
+        assert_eq!(scan_two.ip_changes, 1);
         let record = history.record(&scope(), second.values().next().unwrap()).unwrap();
         assert_eq!(record.first_seen, 100);
         assert_eq!(record.last_seen, 200);
@@ -326,8 +348,8 @@ mod tests {
     fn not_observed_is_not_offline() {
         let mut store = HistoryStore::default();
         let devices = with_devices(&[("192.168.0.103", Some("aa:bb:cc:dd:ee:ff"))]);
-        let _ = store.record_completed_scan(&scope(), &devices, 100);
-        let _ = store.record_completed_scan(&scope(), &BTreeMap::new(), 200);
+        store.ingest_completed_scan(&scope(), &devices, 100);
+        store.ingest_completed_scan(&scope(), &BTreeMap::new(), 200);
         assert_eq!(store.not_seen(&scope()).len(), 1);
         assert_eq!(store.not_seen(&scope())[0].last_seen, 100);
     }
