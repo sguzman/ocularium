@@ -29,7 +29,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] Bundled vendor database or guided optional package installation
 - [x] User-triggered bounded deep scan of already-discovered unidentified hosts on 15 additional ports
 - [x] Reverse-mDNS PTR hostname queries limited to previously found devices on the selected LAN
+- [x] Bounded DNS PTR queries to the selected subnet's on-LAN default gateway, attributed separately from mDNS names
 - [x] Deep-scan accounting for checked ports, open ports, and hostname responders, including zero-findings feedback
+- [x] Exact Caliberate Library HTTP title recognized as a library service (not falsely labelled Calibre)
 - [ ] User-controlled scan scope beyond /24 and configurable ports
 - [x] Copyable discovery report for hardware QA
 - [x] Persistent user labels keyed by MAC when available (IP fallback), with XDG-local JSON storage
