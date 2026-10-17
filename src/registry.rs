@@ -110,6 +110,16 @@ pub struct Registry {
     camera_profiles: BTreeMap<String, CameraProfile>,
 }
 
+impl CameraProfile {
+    /// Editing a saved record requires no live scan. This placeholder contains
+    /// identity only; it must never be put into the active discovery map.
+    pub fn device_for_editing(&self) -> Device {
+        let mut device = Device::new(self.last_ip);
+        device.mac = self.mac.clone();
+        device
+    }
+}
+
 impl Registry {
     pub fn load() -> (Self, Option<String>) {
         let Some(path) = registry_path() else {
@@ -363,6 +373,40 @@ mod tests {
         let decoded: CameraMetadata = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, metadata);
     }
+    #[test]
+    fn saved_unreviewed_metadata_is_editable_without_live_discovery() {
+        let scope = scope([192, 168, 0]);
+        let mut registry = Registry::default();
+        let mut device = Device::new(Ipv4Addr::new(192, 168, 0, 105));
+        device.mac = Some("b4:61:e9:17:2c:0b".into());
+        let identity = camera_key(&scope, &device);
+        let profile = CameraProfile {
+            scope: history::scope_id(&scope),
+            identity: identity.clone(),
+            last_ip: device.ip,
+            mac: device.mac.clone(),
+            role: CameraRole::Unreviewed,
+            app: CameraApp::Unknown,
+            metadata: CameraMetadata {
+                model: "CQ1F".into(),
+                ..Default::default()
+            },
+        };
+        registry.camera_profiles.insert(identity, profile);
+        let json = serde_json::to_string(&registry).unwrap();
+        let reopened: Registry = serde_json::from_str(&json).unwrap();
+        let records = reopened.camera_profiles_for_scope(&scope);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].role, CameraRole::Unreviewed);
+        assert_eq!(records[0].metadata.model, "CQ1F");
+        let editing_device = records[0].device_for_editing();
+        assert_eq!(editing_device.ip, device.ip);
+        assert_eq!(editing_device.mac, device.mac);
+        assert!(editing_device.open_ports.is_empty());
+        assert!(!editing_device.rtsp_responded);
+        assert!(reopened.camera_profile(&scope, &editing_device).is_some());
+    }
+
     #[test]
     fn uses_stable_mac_when_available() {
         let mut original = Device::new(Ipv4Addr::new(192, 168, 0, 103));
