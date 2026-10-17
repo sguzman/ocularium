@@ -27,6 +27,19 @@ Security properties:
 - Endpoint is held only in application memory, never persisted to registry or included in copied reports.
 - The optional source requires an external compatible endpoint; ordinary Ocularium discovery remains a standalone native app.
 
+## Native Rust Meari VVP protocol groundwork (offline)
+
+`src/meari_vvp.rs` implements bounded plaintext VVP media-frame parsing, sequence/keyframe replay gating, the 60-byte authenticated VVP command **encoder**, and explicit P2P transport selection from the authoritative logged-in device record's `deviceP2P` field. All code is pure and in-process: it sends **no** packets, contacts **no** cloud or camera, imports **no** Python runtime, and stores **no** credentials. Tests use synthetic device records and frames with fictitious authentication keys.
+
+Protocol layout reviewed against the MIT-licensed community source:
+- `custom_components/cloudplus/p2p_streamer/protocol.py`: command byte order, magic, MD5 material and command IDs
+- `custom_components/cloudplus/p2p_streamer/codec.py`: per-frame payload offsets, timestamp and sequence
+- `custom_components/cloudplus/p2p_streamer/engine.py`: transport selection from `deviceP2P`
+
+The user-observed ANRAN camera's **platform b81 is not its P2P transport field** and therefore cannot establish Meari compatibility or whether it uses modern signaling versus legacy PPCS. A matching app name alone does not validate the account backend. Live video still requires account-authorized device discovery, verified transport/signaling and key management, media decryption where enabled, and muxing to the native frame decoder.
+
+The module intentionally rejects zero-length or excessively large media payloads and never attempts to decrypt data guessed to be plaintext. Payloads only become usable after the future authorized transport layer has reassembled them.
+
 ## Open engineering work
 
 1. Validate a **specific** backend/device match for the ANRAN camera without logging into undocumented APIs from an untrusted client. Explicit user consent is required before any future account connection.
