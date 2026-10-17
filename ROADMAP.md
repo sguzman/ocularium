@@ -25,6 +25,10 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] User-triggered bounded ONVIF GetCapabilities on advertised same-host HTTP endpoint or one standard port-80 device-service path
 - [x] Surface 401/403/404, SOAP faults, and advertised same-host Media capability without assuming usable video access or cloud-only status
 - [x] Redacted ONVIF capability diagnostics in GUI and discovery report, with protocol mock tests
+- [x] User-reported camera role and app catalog (ANRAN, VicoHome, other, no app), separate from protocol-derived confidence
+- [x] LAN-scoped MAC-first persistent camera identities; preserve unseen user-labeled cameras across scans
+- [x] Camera inventory, table filters, and safe reports include explicit user provenance without claiming playable video
+- [ ] Correlate user-labeled household cameras with app-side device identifiers if supported, without assuming cloud API availability
 - [ ] Authenticate authorized ONVIF responses when the user supplies credentials, without brute forcing
 - [ ] Better interface-aware multicast routing
 - [ ] Handle duplicate/multihomed device identities
