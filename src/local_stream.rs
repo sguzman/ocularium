@@ -274,7 +274,6 @@ mod tests {
         assert!(validate_pixels(vec![0; 100]).is_err());
     }
 
-
     #[test]
     fn synthetic_local_mpegts_feed_decodes_first_frame_when_ffmpeg_available() {
         // Full end-to-end test using a video generated locally, with no
@@ -282,24 +281,40 @@ mod tests {
         use std::net::TcpListener;
         let generated = Command::new("ffmpeg")
             .args([
-                "-hide_banner", "-nostdin", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=5",
-                "-frames:v", "8", "-c:v", "mpeg2video",
-                "-f", "mpegts", "pipe:1"
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=160x90:r=5",
+                "-frames:v",
+                "8",
+                "-c:v",
+                "mpeg2video",
+                "-f",
+                "mpegts",
+                "pipe:1",
             ])
             .output();
         let Ok(generated) = generated else {
             // ffmpeg is optional for discovery installations.
             return;
         };
-        assert!(generated.status.success(), "test-source encoder unavailable");
+        assert!(
+            generated.status.success(),
+            "test-source encoder unavailable"
+        );
         assert!(!generated.stdout.is_empty());
         let video = generated.stdout;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
             let mut request = [0u8; 1024];
             let size = socket.read(&mut request).unwrap();
             assert!(String::from_utf8_lossy(&request[..size]).contains("GET /owned.ts "));
@@ -316,7 +331,11 @@ mod tests {
         );
         server.join().unwrap();
         assert_eq!(result.identity, "synthetic-test-camera");
-        assert!(result.error.is_none(), "{}", result.error.unwrap_or_default());
+        assert!(
+            result.error.is_none(),
+            "{}",
+            result.error.unwrap_or_default()
+        );
         let frame = result.frame.unwrap();
         assert_eq!(frame.len(), crate::snapshot::PIXEL_BYTES);
         assert!(frame.iter().any(|value| *value != 0));
