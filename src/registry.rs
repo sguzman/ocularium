@@ -3,8 +3,10 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, env, fs, io, net::Ipv4Addr, path::PathBuf};
 
-use crate::{discovery::{Device, Scope}, history};
-
+use crate::{
+    discovery::{Device, Scope},
+    history,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -114,15 +116,21 @@ impl Registry {
         self.save()
     }
 
-
-    pub fn camera_profile<'a>(&'a self, scope: &Scope, device: &Device) -> Option<&'a CameraProfile> {
+    pub fn camera_profile<'a>(
+        &'a self,
+        scope: &Scope,
+        device: &Device,
+    ) -> Option<&'a CameraProfile> {
         self.camera_profiles.get(&camera_key(scope, device))
     }
 
     pub fn camera_profiles_for_scope(&self, scope: &Scope) -> Vec<&CameraProfile> {
         let scope_id = history::scope_id(scope);
-        let mut rows: Vec<_> = self.camera_profiles.values()
-            .filter(|profile| profile.scope == scope_id).collect();
+        let mut rows: Vec<_> = self
+            .camera_profiles
+            .values()
+            .filter(|profile| profile.scope == scope_id)
+            .collect();
         rows.sort_by_key(|profile| (profile.last_ip, profile.identity.clone()));
         rows
     }
@@ -139,13 +147,17 @@ impl Registry {
         if role == CameraRole::Unreviewed && app == CameraApp::Unknown {
             next.camera_profiles.remove(&id);
         } else {
-            next.camera_profiles.insert(id.clone(), CameraProfile {
-                scope: history::scope_id(scope),
-                identity: id,
-                last_ip: device.ip,
-                mac: device.mac.as_ref().map(|s| s.to_ascii_lowercase()),
-                role, app,
-            });
+            next.camera_profiles.insert(
+                id.clone(),
+                CameraProfile {
+                    scope: history::scope_id(scope),
+                    identity: id,
+                    last_ip: device.ip,
+                    mac: device.mac.as_ref().map(|s| s.to_ascii_lowercase()),
+                    role,
+                    app,
+                },
+            );
         }
         next.save()?;
         *self = next;
@@ -167,15 +179,15 @@ impl Registry {
     }
 }
 
-
 fn camera_key(scope: &Scope, device: &Device) -> String {
     // Never silently migrate IP-only assertions to a later MAC discovery:
     // that could attach a camera identity to a reassigned DHCP lease.
     let identifier = match device.mac.as_deref() {
-        Some(mac) if mac.len() == 17
-            && mac != "00:00:00:00:00:00"
-            && mac.split(':').count() == 6
-            && mac.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') =>
+        Some(mac)
+            if mac.len() == 17
+                && mac != "00:00:00:00:00:00"
+                && mac.split(':').count() == 6
+                && mac.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') =>
         {
             format!("mac:{}", mac.to_ascii_lowercase())
         }
@@ -204,11 +216,10 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
-
-    fn scope(base: [u8;3]) -> Scope {
+    fn scope(base: [u8; 3]) -> Scope {
         Scope {
             interface: "eno1".into(),
-            local_ip: Ipv4Addr::new(base[0],base[1],base[2],53),
+            local_ip: Ipv4Addr::new(base[0], base[1], base[2], 53),
             base,
         }
     }
@@ -216,31 +227,40 @@ mod tests {
     #[test]
     fn camera_profiles_are_mac_stable_and_scoped() {
         let mut registry = Registry::default();
-        let mut first = Device::new(Ipv4Addr::new(192,168,0,103));
+        let mut first = Device::new(Ipv4Addr::new(192, 168, 0, 103));
         first.mac = Some("AA:BB:CC:DD:EE:FF".into());
-        let a = scope([192,168,0]);
-        let b = scope([192,168,1]);
+        let a = scope([192, 168, 0]);
+        let b = scope([192, 168, 1]);
         // Test insertion separately from disk persistence.
         let key = camera_key(&a, &first);
-        registry.camera_profiles.insert(key.clone(), CameraProfile {
-            scope: history::scope_id(&a), identity: key,
-            last_ip: first.ip, mac: first.mac.clone(),
-            role: CameraRole::UserConfirmed, app: CameraApp::Anran,
-        });
-        let mut moved = Device::new(Ipv4Addr::new(192,168,0,199));
+        registry.camera_profiles.insert(
+            key.clone(),
+            CameraProfile {
+                scope: history::scope_id(&a),
+                identity: key,
+                last_ip: first.ip,
+                mac: first.mac.clone(),
+                role: CameraRole::UserConfirmed,
+                app: CameraApp::Anran,
+            },
+        );
+        let mut moved = Device::new(Ipv4Addr::new(192, 168, 0, 199));
         moved.mac = Some("aa:bb:cc:dd:ee:ff".into());
-        assert_eq!(registry.camera_profile(&a, &moved).unwrap().role, CameraRole::UserConfirmed);
+        assert_eq!(
+            registry.camera_profile(&a, &moved).unwrap().role,
+            CameraRole::UserConfirmed
+        );
         assert!(registry.camera_profile(&b, &moved).is_none());
         assert_eq!(registry.camera_profiles_for_scope(&a).len(), 1);
     }
 
     #[test]
     fn ip_fallback_cannot_silently_claim_new_mac() {
-        let network = scope([192,168,0]);
-        let first = Device::new(Ipv4Addr::new(192,168,0,103));
+        let network = scope([192, 168, 0]);
+        let first = Device::new(Ipv4Addr::new(192, 168, 0, 103));
         let mut later = first.clone();
         later.mac = Some("aa:bb:cc:dd:ee:ff".into());
-        assert_ne!(camera_key(&network,&first), camera_key(&network,&later));
+        assert_ne!(camera_key(&network, &first), camera_key(&network, &later));
     }
 
     #[test]

@@ -399,7 +399,8 @@ impl OculariumApp {
         );
         if let Some(scope) = self.scopes.get(self.selected_scope) {
             let profiles = self.registry.camera_profiles_for_scope(scope);
-            let _ = writeln!(report,
+            let _ = writeln!(
+                report,
                 "User camera inventory: {} saved roles/apps (assertions, not verified video)",
                 profiles.len()
             );
@@ -487,9 +488,11 @@ impl OculariumApp {
             }
             if let Some(scope) = self.scopes.get(self.selected_scope) {
                 if let Some(profile) = self.registry.camera_profile(scope, device) {
-                    let _ = writeln!(report,
+                    let _ = writeln!(
+                        report,
                         "  User-reported identity: role={} · app={} (not verified stream)",
-                        profile.role.label(), profile.app.label()
+                        profile.role.label(),
+                        profile.app.label()
                     );
                 }
             }
@@ -579,7 +582,8 @@ impl OculariumApp {
     }
 
     fn user_camera_role(&self, device: &Device) -> CameraRole {
-        self.scopes.get(self.selected_scope)
+        self.scopes
+            .get(self.selected_scope)
             .and_then(|scope| self.registry.camera_profile(scope, device))
             .map_or(CameraRole::Unreviewed, |profile| profile.role)
     }
@@ -593,21 +597,34 @@ impl OculariumApp {
     }
 
     fn overview(&self, ui: &mut egui::Ui) {
-        let candidates = self.devices.values()
-            .filter(|d| self.camera_filter_match(d)).count();
-        let user_marked = self.devices.values()
-            .filter(|d| self.user_camera_role(d).marked_camera()).count();
+        let candidates = self
+            .devices
+            .values()
+            .filter(|d| self.camera_filter_match(d))
+            .count();
+        let user_marked = self
+            .devices
+            .values()
+            .filter(|d| self.user_camera_role(d).marked_camera())
+            .count();
         let unidentified = self
             .devices
             .values()
-            .filter(|d| classify::classify(d).needs_identification()
-                && !self.user_camera_role(d).marked_camera())
+            .filter(|d| {
+                classify::classify(d).needs_identification()
+                    && !self.user_camera_role(d).marked_camera()
+            })
             .count();
         let equipment = self.devices.len().saturating_sub(candidates + unidentified);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{} discovered devices", self.devices.len())).strong());
             ui.separator();
-            ui.label(RichText::new(format!("{candidates} camera candidates (including user labels)")).color(HIGHLIGHT));
+            ui.label(
+                RichText::new(format!(
+                    "{candidates} camera candidates (including user labels)"
+                ))
+                .color(HIGHLIGHT),
+            );
             ui.separator();
             ui.label(format!("{user_marked} user-marked cameras"));
             ui.separator();
@@ -780,8 +797,12 @@ impl OculariumApp {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
         };
-        let saved: Vec<_> = self.registry.camera_profiles_for_scope(scope).into_iter()
-            .filter(|profile| profile.role.marked_camera()).collect();
+        let saved: Vec<_> = self
+            .registry
+            .camera_profiles_for_scope(scope)
+            .into_iter()
+            .filter(|profile| profile.role.marked_camera())
+            .collect();
         ui.separator();
         ui.collapsing(
             format!("Household camera inventory ({} user-marked)", saved.len()),
@@ -844,7 +865,11 @@ impl OculariumApp {
             .devices
             .values()
             .filter(|d| !self.camera_only || self.camera_filter_match(d))
-            .filter(|d| !self.unidentified_only || (classify::classify(d).needs_identification() && !self.user_camera_role(d).marked_camera()))
+            .filter(|d| {
+                !self.unidentified_only
+                    || (classify::classify(d).needs_identification()
+                        && !self.user_camera_role(d).marked_camera())
+            })
             .filter(|d| {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
@@ -853,7 +878,9 @@ impl OculariumApp {
                         .alias(d)
                         .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
-                    || self.scopes.get(self.selected_scope)
+                    || self
+                        .scopes
+                        .get(self.selected_scope)
                         .and_then(|scope| self.registry.camera_profile(scope, d))
                         .is_some_and(|profile| {
                             profile.role.label().to_ascii_lowercase().contains(&needle)
