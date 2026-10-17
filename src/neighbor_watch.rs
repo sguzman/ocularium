@@ -17,6 +17,7 @@ use std::{
 };
 
 use crate::discovery::Scope;
+use uuid::Uuid;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(10);
 const CANCEL_POLL: Duration = Duration::from_millis(250);
@@ -92,7 +93,17 @@ pub struct Sighting {
 #[derive(Clone, Debug)]
 pub struct Change {
     pub at: u64,
+    pub sequence: u64,
     pub detail: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct MacSighting {
+    pub mac: String,
+    pub first_seen: u64,
+    pub last_seen: u64,
+    pub samples: u32,
+    pub ips: Vec<Ipv4Addr>,
 }
 
 enum Event {
@@ -105,6 +116,9 @@ pub struct NeighborWatch {
     cancel: Arc<AtomicBool>,
     receiver: Receiver<Event>,
     pub observations: BTreeMap<Ipv4Addr, Sighting>,
+    pub by_mac: BTreeMap<String, MacSighting>,
+    pub session_id: String,
+    next_sequence: u64,
     pub changes: Vec<Change>,
     pub sample_count: u32,
     pub last_sample: Option<u64>,
@@ -154,6 +168,9 @@ impl NeighborWatch {
             cancel,
             receiver,
             observations: BTreeMap::new(),
+            by_mac: BTreeMap::new(),
+            session_id: Uuid::new_v4().to_string(),
+            next_sequence: 1,
             changes: Vec::new(),
             sample_count: 0,
             last_sample: None,
@@ -189,7 +206,9 @@ impl NeighborWatch {
     }
 
     fn push_change(&mut self, at: u64, detail: String) {
-        self.changes.push(Change { at, detail });
+        let sequence = self.next_sequence;
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        self.changes.push(Change { at, sequence, detail });
         if self.changes.len() > MAX_EVENTS {
             self.changes.drain(..self.changes.len() - MAX_EVENTS);
         }
@@ -218,6 +237,23 @@ impl NeighborWatch {
             );
         }
         for neighbor in sample.neighbors {
+            let mac_record = self.by_mac.entry(neighbor.mac.clone()).or_insert_with(|| {
+                MacSighting {
+                    mac: neighbor.mac.clone(),
+                    first_seen: sample.taken_at,
+                    last_seen: sample.taken_at,
+                    samples: 0,
+                    ips: Vec::new(),
+                }
+            });
+            mac_record.last_seen = sample.taken_at;
+            mac_record.samples = mac_record.samples.saturating_add(1);
+            if !mac_record.ips.contains(&neighbor.ip) {
+                if mac_record.ips.len() >= 12 {
+                    mac_record.ips.remove(0);
+                }
+                mac_record.ips.push(neighbor.ip);
+            }
             if let Some(entry) = self.observations.get_mut(&neighbor.ip) {
                 let different_mac = entry.mac != neighbor.mac;
                 let returned = !entry.in_cache;
@@ -292,6 +328,20 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn correlates_one_mac_across_multiple_ips_without_merging_changed_mac() {
+        let mut watch = NeighborWatch::start(scope());
+        watch.stop();
+        watch.apply_sample(sample(100, &[("192.168.0.103", "aa:bb:cc:dd:ee:ff")]));
+        watch.apply_sample(sample(110, &[("192.168.0.105", "aa:bb:cc:dd:ee:ff")]));
+        assert_eq!(watch.by_mac.len(), 1);
+        let record = watch.by_mac.get("aa:bb:cc:dd:ee:ff").unwrap();
+        assert_eq!(record.ips.len(), 2);
+        assert_eq!(record.samples, 2);
+        watch.apply_sample(sample(120, &[("192.168.0.105", "aa:bb:cc:dd:ee:01")]));
+        assert_eq!(watch.by_mac.len(), 2);
     }
 
     #[test]
