@@ -45,7 +45,7 @@ impl Target {
         }
         let path = format!("/{path}");
         if path.len() > 512 || !path.bytes().all(|byte|
-            byte.is_ascii_graphic() && ![b'?', b'#', b'@', b'\\'].contains(&byte)
+            byte.is_ascii_graphic() && !b"?#@\\".contains(&byte)
         ) {
             return None;
         }
