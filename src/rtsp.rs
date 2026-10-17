@@ -22,6 +22,15 @@ pub struct RtspInspection {
     pub path: String,
     pub options_status: Option<u16>,
     pub describe_status: Option<u16>,
+    /// Unauthenticated DESCRIBE, before trying any provided credentials.
+    pub initial_describe_status: Option<u16>,
+    /// Set only when an authenticated DESCRIBE response actually arrived.
+    pub authenticated_retry_status: Option<u16>,
+    /// True if an Authorization request was attempted, even on a network error.
+    pub retry_attempted: bool,
+    /// Safe metadata only: never contains realm, nonce, username or password.
+    pub challenge_summary: Option<String>,
+    pub auth_diagnostic: String,
     pub server: Option<String>,
     pub authentication: Option<String>,
     pub codecs: Vec<String>,
@@ -91,7 +100,19 @@ pub(crate) fn valid_path(path: &str) -> bool {
             .all(|b| b.is_ascii_graphic() && b != b'#' && b != b'@')
 }
 
-fn request(
+fn connect(ip: Ipv4Addr, port: u16) -> Result<TcpStream, String> {
+    let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
+    let stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
+        .map_err(|error| format!("Connect: {error}"))?;
+    stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    Ok(stream)
+}
+
+/// Send one RTSP request, without closing the connection. Some camera servers
+/// bind their Digest challenge and authorization exchange to one socket.
+fn request_on_stream(
+    stream: &mut TcpStream,
     ip: Ipv4Addr,
     port: u16,
     path: &str,
@@ -99,15 +120,6 @@ fn request(
     seq: u8,
     authorization: Option<&str>,
 ) -> Result<Response, String> {
-    let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
-    let mut stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
-        .map_err(|error| format!("Connect: {error}"))?;
-    stream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(IO_TIMEOUT))
-        .map_err(|e| e.to_string())?;
     let uri = format!("rtsp://{ip}:{port}{path}");
     let mut packet = format!(
         "{method} {uri} RTSP/1.0\r\nCSeq: {seq}\r\nUser-Agent: Ocularium/0.1\r\nAccept: application/sdp\r\n"
@@ -118,9 +130,8 @@ fn request(
         packet.push_str("\r\n");
     }
     packet.push_str("\r\n");
-    stream
-        .write_all(packet.as_bytes())
-        .map_err(|e| e.to_string())?;
+    stream.write_all(packet.as_bytes()).map_err(|e| e.to_string())?;
+
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
     while data.len() < MAX_RESPONSE {
@@ -141,16 +152,24 @@ fn request(
                     }
                 }
             }
-            Err(err)
-                if err.kind() == std::io::ErrorKind::TimedOut
-                    || err.kind() == std::io::ErrorKind::WouldBlock =>
-            {
-                break
-            }
+            Err(err) if err.kind() == std::io::ErrorKind::TimedOut
+                || err.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(error) => return Err(error.to_string()),
         }
     }
     parse_response(&data).ok_or_else(|| "No valid RTSP response".to_owned())
+}
+
+fn request(
+    ip: Ipv4Addr,
+    port: u16,
+    path: &str,
+    method: &str,
+    seq: u8,
+    authorization: Option<&str>,
+) -> Result<Response, String> {
+    let mut stream = connect(ip, port)?;
+    request_on_stream(&mut stream, ip, port, path, method, seq, authorization)
 }
 
 // Parse a Digest challenge, respecting commas inside quoted qop lists.
@@ -277,6 +296,9 @@ fn digest_authorization(
     }
     if qop.is_some() {
         value.push_str(&format!(", qop=auth, nc=00000001, cnonce=\"{cnonce}\""));
+    } else if algorithm.eq_ignore_ascii_case("MD5-sess") {
+        // MD5-sess needs cnonce even when the challenge omits qop.
+        value.push_str(&format!(", cnonce=\"{cnonce}\""));
     }
     if get("algorithm").is_some() {
         value.push_str(&format!(", algorithm={algorithm}"));
@@ -299,20 +321,57 @@ fn codecs(sdp: &str) -> Vec<String> {
     found
 }
 
-/// Only the caller-provided path is tested, and at most one Digest retry is sent.
+/// Safe to display or copy: never include raw realm, nonce, passwords or
+/// authorization headers. Algorithms/qop flags explain compatibility.
+fn summarize_challenge(challenge: &str) -> String {
+    let scheme = challenge.split_whitespace().next().unwrap_or("unknown");
+    if !scheme.eq_ignore_ascii_case("Digest") {
+        return format!("Scheme: {scheme} (Digest not advertised)");
+    }
+    match challenge_parameters(challenge) {
+        Ok(params) => {
+            let get = |key: &str| params.iter()
+                .find(|(name, _)| name == key).map(|(_, value)| value.as_str());
+            let algorithm = get("algorithm").unwrap_or("MD5");
+            let qop = get("qop").map(|list| {
+                if list.split(',').any(|part| part.trim().eq_ignore_ascii_case("auth")) {
+                    "auth available"
+                } else {
+                    "auth unavailable"
+                }
+            }).unwrap_or("not specified");
+            let stale = if get("stale").is_some_and(|value| value.eq_ignore_ascii_case("true")) {
+                "yes"
+            } else {
+                "no/unspecified"
+            };
+            format!(
+                "Digest challenge: algorithm={}, qop={}, stale={}, realm present={}, nonce present={}",
+                algorithm.chars().take(32).collect::<String>(),
+                qop, stale, get("realm").is_some(), get("nonce").is_some(),
+            )
+        }
+        Err(_) => "Digest challenge could not be parsed (no values displayed)".into(),
+    }
+}
+
+/// Only the caller-provided path is tested, at most one authenticated retry.
+/// The two DESCRIBE requests share one TCP connection, including CSeq 2 -> 3.
 pub fn inspect(
     ip: Ipv4Addr,
     port: u16,
     path: String,
     credentials: Option<Credentials>,
 ) -> RtspInspection {
-    let provided_credentials = credentials.is_some();
     let mut result = RtspInspection {
-        ip,
-        port,
-        path: path.clone(),
+        ip, port, path: path.clone(),
         options_status: None,
         describe_status: None,
+        initial_describe_status: None,
+        authenticated_retry_status: None,
+        retry_attempted: false,
+        challenge_summary: None,
+        auth_diagnostic: "No authentication attempted".into(),
         server: None,
         authentication: None,
         codecs: Vec::new(),
@@ -320,8 +379,7 @@ pub fn inspect(
         message: String::new(),
     };
     if !valid_path(&path) {
-        result.message =
-            "Path must start with /, contain no spaces, and be at most 256 characters".into();
+        result.message = "Path must start with /, contain no spaces, and be at most 256 characters".into();
         return result;
     }
     match request(ip, port, &path, "OPTIONS", 1, None) {
@@ -334,58 +392,95 @@ pub fn inspect(
             return result;
         }
     }
-    let response = match request(ip, port, &path, "DESCRIBE", 2, None) {
+    let mut connection = match connect(ip, port) {
+        Ok(connection) => connection,
+        Err(error) => {
+            result.message = format!("DESCRIBE connection failed: {error}");
+            return result;
+        }
+    };
+    let mut response = match request_on_stream(
+        &mut connection, ip, port, &path, "DESCRIBE", 2, None
+    ) {
         Ok(response) => response,
         Err(error) => {
             result.message = format!("DESCRIBE failed: {error}");
             return result;
         }
     };
-    let mut response = response;
-    if let Some(ref challenge) = response.www_authenticate {
-        result.authentication = challenge.split_whitespace().next().map(str::to_owned);
+    result.initial_describe_status = Some(response.status);
+    result.describe_status = Some(response.status);
+    if result.server.is_none() {
+        result.server = response.server.clone();
     }
+    if let Some(challenge) = &response.www_authenticate {
+        result.authentication = challenge.split_whitespace().next().map(str::to_owned);
+        result.challenge_summary = Some(summarize_challenge(challenge));
+    }
+
     if response.status == 401 {
-        if let Some(credentials) = credentials {
-            if let Some(challenge) = &response.www_authenticate {
+        match (credentials, response.www_authenticate.as_deref()) {
+            (None, _) => {
+                result.auth_diagnostic = "Credentials not provided; no authenticated request sent".into();
+            }
+            (Some(_), None) => {
+                result.auth_diagnostic =
+                    "Server returned 401 without WWW-Authenticate; no retry possible".into();
+            }
+            (Some(credentials), Some(challenge)) => {
                 let uri = format!("rtsp://{ip}:{port}{path}");
                 match digest_authorization(challenge, &credentials, "DESCRIBE", &uri) {
                     Ok(authorization) => {
-                        match request(ip, port, &path, "DESCRIBE", 3, Some(&authorization)) {
-                            Ok(retry) => response = retry,
+                        result.retry_attempted = true;
+                        // Sensitive Authorization exists only in this worker and
+                        // is never returned in diagnostics, exports, or UI.
+                        match request_on_stream(
+                            &mut connection, ip, port, &path, "DESCRIBE", 3, Some(&authorization)
+                        ) {
+                            Ok(retry) => {
+                                result.authenticated_retry_status = Some(retry.status);
+                                result.describe_status = Some(retry.status);
+                                if let Some(challenge) = &retry.www_authenticate {
+                                    result.challenge_summary = Some(summarize_challenge(challenge));
+                                }
+                                result.auth_diagnostic = match retry.status {
+                                    200 => "Authenticated DESCRIBE accepted on same connection; stream decodability not yet confirmed".into(),
+                                    401 => "Authenticated DESCRIBE was sent on same connection and returned 401. Login, RTSP permissions, path, or server Digest compatibility remain possible causes".into(),
+                                    403 => "Authenticated DESCRIBE was sent; server returned 403 Forbidden".into(),
+                                    404 => "Authenticated DESCRIBE was sent; server returned 404 for this path".into(),
+                                    status => format!("Authenticated DESCRIBE sent; server returned {status}"),
+                                };
+                                response = retry;
+                            }
                             Err(error) => {
-                                result.message = format!("Authenticated DESCRIBE failed: {error}");
+                                result.auth_diagnostic =
+                                    "Authenticated DESCRIBE was attempted, but no valid retry response arrived".into();
+                                result.message = format!("Authenticated DESCRIBE transport error: {error}");
                                 return result;
                             }
                         }
                     }
                     Err(error) => {
-                        result.message = error;
-                        return result;
+                        result.auth_diagnostic = format!("No authenticated retry sent: {error}");
                     }
                 }
             }
         }
-    }
-    result.describe_status = Some(response.status);
-    if result.server.is_none() {
-        result.server = response.server;
+    } else {
+        result.auth_diagnostic =
+            "Initial DESCRIBE did not request authentication; no retry needed".into();
     }
     result.sdp_received = response.status == 200
-        && response
-            .content_type
-            .as_deref()
+        && response.content_type.as_deref()
             .is_some_and(|value| value.to_ascii_lowercase().contains("application/sdp"));
     result.message = if result.sdp_received {
         result.codecs = codecs(&response.body);
         "SDP description received; video playback not verified".into()
     } else {
         match response.status {
-            401 if provided_credentials =>
-                "Authentication still required: credentials may be rejected or this path may be unauthorized".into(),
-            401 => "Authentication required; no credentials were supplied".into(),
+            401 => "RTSP access not authorized for supplied stream path".into(),
             403 => "Stream description forbidden".into(),
-            404 => "Specified path unavailable; the device may use another path".into(),
+            404 => "Specified stream path unavailable; device may use another path".into(),
             status => format!("RTSP status {status}; no SDP description confirmed"),
         }
     };
