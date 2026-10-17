@@ -44,7 +44,9 @@ impl RtspInspection {
         // in stream paths. Never export username, password, nonce, realm,
         // complete challenge, or Authorization header.
         let status = |value: Option<u16>| {
-            value.map(|code| code.to_string()).unwrap_or_else(|| "no response".into())
+            value
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "no response".into())
         };
         format!(
             "Ocularium RTSP access diagnostic (no secrets or stream path)\nEndpoint: {}:{}\nOPTIONS: {}\nInitial DESCRIBE: {}\nAuthenticated retry sent: {}\nAuthenticated retry response: {}\nFinal DESCRIBE: {}\nChallenge metadata: {}\nAssessment: {}\nSDP returned: {}\n",
@@ -122,8 +124,12 @@ fn connect(ip: Ipv4Addr, port: u16) -> Result<TcpStream, String> {
     let addr = SocketAddr::V4(SocketAddrV4::new(ip, port));
     let stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT)
         .map_err(|error| format!("Connect: {error}"))?;
-    stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|error| error.to_string())?;
-    stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(|error| error.to_string())?;
     Ok(stream)
 }
 
@@ -148,7 +154,9 @@ fn request_on_stream(
         packet.push_str("\r\n");
     }
     packet.push_str("\r\n");
-    stream.write_all(packet.as_bytes()).map_err(|e| e.to_string())?;
+    stream
+        .write_all(packet.as_bytes())
+        .map_err(|e| e.to_string())?;
 
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
@@ -170,8 +178,12 @@ fn request_on_stream(
                     }
                 }
             }
-            Err(err) if err.kind() == std::io::ErrorKind::TimedOut
-                || err.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(err)
+                if err.kind() == std::io::ErrorKind::TimedOut
+                    || err.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                break
+            }
             Err(error) => return Err(error.to_string()),
         }
     }
@@ -348,16 +360,25 @@ fn summarize_challenge(challenge: &str) -> String {
     }
     match challenge_parameters(challenge) {
         Ok(params) => {
-            let get = |key: &str| params.iter()
-                .find(|(name, _)| name == key).map(|(_, value)| value.as_str());
+            let get = |key: &str| {
+                params
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| value.as_str())
+            };
             let algorithm = get("algorithm").unwrap_or("MD5");
-            let qop = get("qop").map(|list| {
-                if list.split(',').any(|part| part.trim().eq_ignore_ascii_case("auth")) {
-                    "auth available"
-                } else {
-                    "auth unavailable"
-                }
-            }).unwrap_or("not specified");
+            let qop = get("qop")
+                .map(|list| {
+                    if list
+                        .split(',')
+                        .any(|part| part.trim().eq_ignore_ascii_case("auth"))
+                    {
+                        "auth available"
+                    } else {
+                        "auth unavailable"
+                    }
+                })
+                .unwrap_or("not specified");
             let stale = if get("stale").is_some_and(|value| value.eq_ignore_ascii_case("true")) {
                 "yes"
             } else {
@@ -382,7 +403,9 @@ pub fn inspect(
     credentials: Option<Credentials>,
 ) -> RtspInspection {
     let mut result = RtspInspection {
-        ip, port, path: path.clone(),
+        ip,
+        port,
+        path: path.clone(),
         options_status: None,
         describe_status: None,
         initial_describe_status: None,
@@ -397,7 +420,8 @@ pub fn inspect(
         message: String::new(),
     };
     if !valid_path(&path) {
-        result.message = "Path must start with /, contain no spaces, and be at most 256 characters".into();
+        result.message =
+            "Path must start with /, contain no spaces, and be at most 256 characters".into();
         return result;
     }
     match request(ip, port, &path, "OPTIONS", 1, None) {
@@ -417,15 +441,14 @@ pub fn inspect(
             return result;
         }
     };
-    let mut response = match request_on_stream(
-        &mut connection, ip, port, &path, "DESCRIBE", 2, None
-    ) {
-        Ok(response) => response,
-        Err(error) => {
-            result.message = format!("DESCRIBE failed: {error}");
-            return result;
-        }
-    };
+    let mut response =
+        match request_on_stream(&mut connection, ip, port, &path, "DESCRIBE", 2, None) {
+            Ok(response) => response,
+            Err(error) => {
+                result.message = format!("DESCRIBE failed: {error}");
+                return result;
+            }
+        };
     result.initial_describe_status = Some(response.status);
     result.describe_status = Some(response.status);
     if result.server.is_none() {
@@ -440,7 +463,8 @@ pub fn inspect(
         let challenge_for_retry = response.www_authenticate.clone();
         match (credentials, challenge_for_retry.as_deref()) {
             (None, _) => {
-                result.auth_diagnostic = "Credentials not provided; no authenticated request sent".into();
+                result.auth_diagnostic =
+                    "Credentials not provided; no authenticated request sent".into();
             }
             (Some(_), None) => {
                 result.auth_diagnostic =
@@ -454,7 +478,13 @@ pub fn inspect(
                         // Sensitive Authorization exists only in this worker and
                         // is never returned in diagnostics, exports, or UI.
                         match request_on_stream(
-                            &mut connection, ip, port, &path, "DESCRIBE", 3, Some(&authorization)
+                            &mut connection,
+                            ip,
+                            port,
+                            &path,
+                            "DESCRIBE",
+                            3,
+                            Some(&authorization),
                         ) {
                             Ok(retry) => {
                                 result.authenticated_retry_status = Some(retry.status);
@@ -474,7 +504,8 @@ pub fn inspect(
                             Err(error) => {
                                 result.auth_diagnostic =
                                     "Authenticated DESCRIBE was attempted, but no valid retry response arrived".into();
-                                result.message = format!("Authenticated DESCRIBE transport error: {error}");
+                                result.message =
+                                    format!("Authenticated DESCRIBE transport error: {error}");
                                 return result;
                             }
                         }
@@ -490,7 +521,9 @@ pub fn inspect(
             "Initial DESCRIBE did not request authentication; no retry needed".into();
     }
     result.sdp_received = response.status == 200
-        && response.content_type.as_deref()
+        && response
+            .content_type
+            .as_deref()
             .is_some_and(|value| value.to_ascii_lowercase().contains("application/sdp"));
     result.message = if result.sdp_received {
         result.codecs = codecs(&response.body);
@@ -581,16 +614,23 @@ mod tests {
     fn md5_sess_without_qop_includes_required_client_nonce() {
         let header = digest_authorization(
             "Digest realm=\"camera\", nonce=\"abc123\", algorithm=MD5-sess",
-            &Credentials { username: "testuser".into(), password: "not-exported".into() },
-            "DESCRIBE", "rtsp://127.0.0.1:8554/live",
-        ).unwrap();
+            &Credentials {
+                username: "testuser".into(),
+                password: "not-exported".into(),
+            },
+            "DESCRIBE",
+            "rtsp://127.0.0.1:8554/live",
+        )
+        .unwrap();
         assert!(header.contains("cnonce=\""));
         assert!(!header.contains("qop=auth"));
         assert!(!header.contains("not-exported"));
     }
 
     fn read_request(stream: &mut std::net::TcpStream) -> String {
-        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let mut bytes = Vec::new();
         let mut buf = [0u8; 1024];
         while !bytes.ends_with(b"\r\n\r\n") {
@@ -611,7 +651,9 @@ mod tests {
             let (mut options, _) = listener.accept().unwrap();
             let first = read_request(&mut options);
             assert!(first.starts_with("OPTIONS rtsp://127.0.0.1:"));
-            options.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n").unwrap();
+            options
+                .write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
             drop(options);
             let (mut describe, _) = listener.accept().unwrap();
             let unauth = read_request(&mut describe);
@@ -641,7 +683,10 @@ mod tests {
             Ipv4Addr::LOCALHOST,
             port,
             "/live".into(),
-            Some(Credentials { username: "testuser".into(), password: "test-password".into() }),
+            Some(Credentials {
+                username: "testuser".into(),
+                password: "test-password".into(),
+            }),
         );
         server.join().unwrap();
         assert_eq!(result.options_status, Some(200));
@@ -651,7 +696,11 @@ mod tests {
         assert!(result.sdp_received);
         assert_eq!(result.codecs, ["H264"]);
         assert!(!result.auth_diagnostic.contains("test-password"));
-        assert!(!result.challenge_summary.as_deref().unwrap().contains("private"));
+        assert!(!result
+            .challenge_summary
+            .as_deref()
+            .unwrap()
+            .contains("private"));
     }
 
     #[test]
@@ -662,7 +711,9 @@ mod tests {
         let server = std::thread::spawn(move || {
             let (mut options, _) = listener.accept().unwrap();
             let _ = read_request(&mut options);
-            options.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n").unwrap();
+            options
+                .write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
             drop(options);
             let (mut describe, _) = listener.accept().unwrap();
             let _ = read_request(&mut describe);
@@ -672,16 +723,27 @@ mod tests {
             describe.write_all(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 3\r\nWWW-Authenticate: Digest realm=\"private\", nonce=\"next\", stale=true\r\nContent-Length: 0\r\n\r\n").unwrap();
         });
         let result = inspect(
-            Ipv4Addr::LOCALHOST, port, "/".into(),
-            Some(Credentials { username: "testuser".into(), password: "secret".into() }),
+            Ipv4Addr::LOCALHOST,
+            port,
+            "/".into(),
+            Some(Credentials {
+                username: "testuser".into(),
+                password: "secret".into(),
+            }),
         );
         server.join().unwrap();
         assert_eq!(result.initial_describe_status, Some(401));
         assert_eq!(result.authenticated_retry_status, Some(401));
         assert_eq!(result.describe_status, Some(401));
         assert!(result.retry_attempted);
-        assert!(result.challenge_summary.as_deref().unwrap().contains("stale=yes"));
-        assert!(!result.auth_diagnostic.to_lowercase().contains("wrong password"));
+        assert!(result
+            .challenge_summary
+            .as_deref()
+            .unwrap()
+            .contains("stale=yes"));
+        assert!(!result
+            .auth_diagnostic
+            .to_lowercase()
+            .contains("wrong password"));
     }
-
 }

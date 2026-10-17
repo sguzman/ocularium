@@ -1393,7 +1393,8 @@ impl OculariumApp {
                 ui.label(result.summary());
                 ui.label(format!(
                     "Initial DESCRIBE: {}",
-                    result.initial_describe_status
+                    result
+                        .initial_describe_status
                         .map_or_else(|| "no response".to_owned(), |status| status.to_string()),
                 ));
                 ui.label(format!(
@@ -1403,14 +1404,18 @@ impl OculariumApp {
                 if result.retry_attempted {
                     ui.label(format!(
                         "Authenticated retry response: {}",
-                        result.authenticated_retry_status
+                        result
+                            .authenticated_retry_status
                             .map_or_else(|| "no response".to_owned(), |status| status.to_string()),
                     ));
                 }
                 if let Some(details) = &result.challenge_summary {
                     ui.label(format!("Challenge (redacted): {details}"));
                 }
-                ui.label(format!("Authentication assessment: {}", result.auth_diagnostic));
+                ui.label(format!(
+                    "Authentication assessment: {}",
+                    result.auth_diagnostic
+                ));
                 if ui.button("Copy safe RTSP diagnostic").on_hover_text(
                     "Copies status codes and compatibility flags only. Does not include login credentials, stream path, Digest realm, nonce, or Authorization header."
                 ).clicked() {
