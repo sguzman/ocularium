@@ -46,6 +46,12 @@ Select a discovered device and click **Inspect advertised ONVIF** if it supplied
 
 Results distinguish no HTTP response, 401/403 authorization barriers, 404 missing endpoint, SOAP faults, and recognized ONVIF capability categories. If an ONVIF Media service URL is advertised, its hostname must match the selected device before the UI marks it as same-host. **Copy safe ONVIF diagnostic** and the discovery report contain status/capability evidence without raw service URLs or credentials. ONVIF advertising is not proof a stream is playable, and absence of an ONVIF reply is not proof of a cloud-only camera. This feature does not request stream URIs or decode video.
 
+## Experimental generic local MPEG-TS source
+
+In the **Saved camera records** editor, expand **Experimental local stream frame (MPEG-TS)** and supply an *already authorized, existing* `http://private-IPv4:port/path` endpoint from your own LAN or loopback. **Capture frame from local stream** fetches its MPEG-TS bytes locally and attempts to display exactly one CPU-decoded frame with ffmpeg, without persistent recording or credentials. The URL is not saved, shown in reports, or passed to ffmpeg; the decoder receives only video data over stdin. The HTTP client blocks external destinations, URL credentials and tokens, DNS, redirects, cookies, and proxies; inputs and byte counts are bounded. This does **not** connect to ANRAN/VicoHome accounts or create a local stream server.
+
+VicoHome officially does not support third-party RTSP/ONVIF live feeds, while experimental community ANRAN/Meari integrations may work for some products. Compatibility with the household cameras has **not** been verified. For sources and adapter milestones, see [camera ecosystem integration research](docs/camera-integrations.md). No app passwords should be supplied to Ocularium.
+
 ## Experimental single-frame RTSP capture
 
 Select an RTSP-capable discovered device and enter its **exact stream path** (no endpoint guessing). Click **Capture one frame :PORT**. If the local `ffmpeg` executable is installed, Ocularium runs it in a bounded worker to attempt CPU decoding of a single 640 × 360 RGB frame, shown as an in-memory egui texture. Capture is manually triggered, runs at most 12 seconds, and never records, uploads, saves, or includes image pixels in reports.
