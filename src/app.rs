@@ -412,9 +412,11 @@ impl OculariumApp {
             );
             for profile in profiles {
                 let _ = writeln!(report,
-                    "  User camera profile: last IP={} · MAC={} · role={} · app={} · current scan presence unverified",
+                    "  User camera profile: last IP={} · MAC={} · role={} · app={} · model={} · firmware={} · platform={} · device ID present={} · current scan presence unverified",
                     profile.last_ip, profile.mac.as_deref().unwrap_or("-"),
-                    profile.role.label(), profile.app.label()
+                    profile.role.label(), profile.app.label(),
+                    profile.metadata.model, profile.metadata.firmware,
+                    profile.metadata.platform, !profile.metadata.serial.is_empty()
                 );
             }
         }
@@ -849,6 +851,25 @@ impl OculariumApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(label).strong());
                         ui.label(format!("{} · {} · {}", ip, profile.role.label(), profile.app.label()));
+                        if !profile.metadata.model.is_empty() {
+                            ui.label(format!("Model: {}", profile.metadata.model));
+                        }
+                        if !profile.metadata.firmware.is_empty() {
+                            ui.label(format!("Firmware: {}", profile.metadata.firmware));
+                        }
+                        if !profile.metadata.platform.is_empty() {
+                            ui.label(format!("Platform: {}", profile.metadata.platform));
+                        }
+                        if !profile.metadata.serial.is_empty() {
+                            ui.label(RichText::new("Device ID saved (hidden)").color(MUTED).small());
+                        }
+                        ui.label(format!(
+                            "Local access: {}",
+                            discovered.map_or(
+                                "not checked in this session",
+                                |device| self.local_video_evidence(device)
+                            )
+                        ));
                         ui.label(
                             RichText::new(if discovered.is_some() {
                                 "observed in current scan"
