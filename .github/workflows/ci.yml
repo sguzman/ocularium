@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -18,16 +18,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Native graphics dependencies
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxinerama-dev libgl1-mesa-dev
-      - run: cargo fmt --all
+      - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
-      - name: Commit formatted sources
-        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
-        run: |
-          if ! git diff --quiet -- src; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add src
-            git commit -m 'style: format RTSP Digest self-checks'
-            git push
-          fi
