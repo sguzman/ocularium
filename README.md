@@ -26,6 +26,14 @@ The **Household camera inventory** section includes user-marked possible/confirm
 
 No credentials, video frames, app tokens, or cloud accounts are saved. User confirmation means someone identified the camera, **not** that RTSP/ONVIF works, that the device is connected, or that Ocularium can play video.
 
+## Private camera hardware metadata and access evidence
+
+The camera identity editor now has an optional **Camera hardware details** section for model, firmware, device platform/MCU, and a user-entered serial/device ID. These fields are saved **only when you click Save camera identity**; they are not prefilled with private household identifiers in this public repository. Serial fields are masked by default, excluded from **Copy report**, and replaced there with a yes/no presence flag. The XDG-local `registry.json` is written using owner-only permissions (`0600`) on Linux. No app passwords, cloud login tokens, video, or credentials are stored.
+
+The household inventory distinguishes **user-provided identity** from **live access evidence**. It can display a protocol-level RTSP response, rejected RTSP access, advertised ONVIF Media, received SDP, or a successfully decoded single frame **during the current application session**. A saved model, app selection, or chipset vendor is never interpreted as proof that live viewing works. Without a new scan/test the app reports **not checked in this session**, not "offline" or "cloud-only".
+
+**App credentials are not supported yet.** ANRAN and VicoHome mobile-app accounts are not assumed to be RTSP accounts. Do not enter those logins into RTSP fields; an app-specific authorized integration must be implemented and validated before app-login QA.
+
 ## ONVIF capability investigation
 
 Select a discovered device and click **Inspect advertised ONVIF** if it supplied a WS-Discovery ONVIF URL. Ocularium checks only one same-host, plain-HTTP advertised endpoint; it never follows off-host URLs, redirects, or handles credentials. If the device did not advertise an ONVIF service, the UI instead offers **Check standard ONVIF service**, which sends one unauthenticated SOAP GetCapabilities request to the conventional `http://DEVICE_IP/onvif/device_service` endpoint on port 80. It does not sweep ports or attempt password guessing.
