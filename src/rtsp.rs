@@ -83,7 +83,7 @@ fn parse_response(bytes: &[u8]) -> Option<Response> {
     })
 }
 
-fn valid_path(path: &str) -> bool {
+pub(crate) fn valid_path(path: &str) -> bool {
     path.starts_with('/')
         && path.len() <= 256
         && path
