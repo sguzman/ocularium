@@ -26,7 +26,7 @@ pub struct RtspInspection {
     pub initial_describe_status: Option<u16>,
     /// Set only when an authenticated DESCRIBE response actually arrived.
     pub authenticated_retry_status: Option<u16>,
-    /// True if an Authorization request was attempted, even on a network error.
+    /// True only after the complete Authorization-bearing request was written to the socket.
     pub retry_attempted: bool,
     /// Safe metadata only: never contains realm, nonce, username or password.
     pub challenge_summary: Option<String>,
@@ -143,6 +143,7 @@ fn request_on_stream(
     method: &str,
     seq: u8,
     authorization: Option<&str>,
+    sent: Option<&mut bool>,
 ) -> Result<Response, String> {
     let uri = format!("rtsp://{ip}:{port}{path}");
     let mut packet = format!(
@@ -157,6 +158,9 @@ fn request_on_stream(
     stream
         .write_all(packet.as_bytes())
         .map_err(|e| e.to_string())?;
+    if let Some(sent) = sent {
+        *sent = true;
+    }
 
     let mut data = Vec::new();
     let mut chunk = [0u8; 2048];
@@ -199,7 +203,7 @@ fn request(
     authorization: Option<&str>,
 ) -> Result<Response, String> {
     let mut stream = connect(ip, port)?;
-    request_on_stream(&mut stream, ip, port, path, method, seq, authorization)
+    request_on_stream(&mut stream, ip, port, path, method, seq, authorization, None)
 }
 
 // Parse a Digest challenge, respecting commas inside quoted qop lists.
@@ -442,7 +446,7 @@ pub fn inspect(
         }
     };
     let mut response =
-        match request_on_stream(&mut connection, ip, port, &path, "DESCRIBE", 2, None) {
+        match request_on_stream(&mut connection, ip, port, &path, "DESCRIBE", 2, None, None) {
             Ok(response) => response,
             Err(error) => {
                 result.message = format!("DESCRIBE failed: {error}");
@@ -474,7 +478,6 @@ pub fn inspect(
                 let uri = format!("rtsp://{ip}:{port}{path}");
                 match digest_authorization(challenge, &credentials, "DESCRIBE", &uri) {
                     Ok(authorization) => {
-                        result.retry_attempted = true;
                         // Sensitive Authorization exists only in this worker and
                         // is never returned in diagnostics, exports, or UI.
                         match request_on_stream(
@@ -485,6 +488,7 @@ pub fn inspect(
                             "DESCRIBE",
                             3,
                             Some(&authorization),
+                            Some(&mut result.retry_attempted),
                         ) {
                             Ok(retry) => {
                                 result.authenticated_retry_status = Some(retry.status);
@@ -502,8 +506,11 @@ pub fn inspect(
                                 response = retry;
                             }
                             Err(error) => {
-                                result.auth_diagnostic =
-                                    "Authenticated DESCRIBE was attempted, but no valid retry response arrived".into();
+                                result.auth_diagnostic = if result.retry_attempted {
+                                    "Authenticated DESCRIBE was written, but no valid retry response arrived".into()
+                                } else {
+                                    "Could not send authenticated DESCRIBE; no retry response available".into()
+                                };
                                 result.message =
                                     format!("Authenticated DESCRIBE transport error: {error}");
                                 return result;
