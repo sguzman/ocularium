@@ -325,7 +325,8 @@ impl OculariumApp {
                 Err(mpsc::TryRecvError::Empty) => self.onvif_receiver = Some(rx),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.onvif_inspecting = None;
-                    self.messages.push("ONVIF capability check stopped unexpectedly".into());
+                    self.messages
+                        .push("ONVIF capability check stopped unexpectedly".into());
                 }
             }
         }
@@ -532,7 +533,11 @@ impl OculariumApp {
                 let _ = writeln!(report, "  ONVIF service: {service}");
             }
             if let Some(inspection) = self.onvif_results.get(&device.ip) {
-                let _ = writeln!(report, "  {}", inspection.safe_summary().replace('\n', " | "));
+                let _ = writeln!(
+                    report,
+                    "  {}",
+                    inspection.safe_summary().replace('\n', " | ")
+                );
             }
             for info in &device.http {
                 let _ = writeln!(
@@ -1215,19 +1220,33 @@ impl OculariumApp {
         if let Some(result) = self.onvif_results.get(&device.ip) {
             ui.label(format!(
                 "HTTP status: {} · {}",
-                result.status.map_or_else(|| "no response".to_owned(), |v| v.to_string()),
+                result
+                    .status
+                    .map_or_else(|| "no response".to_owned(), |v| v.to_string()),
                 result.message,
             ));
             ui.label(format!(
                 "Endpoint: {} on port {} · SOAP fault: {}",
-                if result.advertised_endpoint { "advertised by device" } else { "standard fallback" },
-                result.port, result.fault,
+                if result.advertised_endpoint {
+                    "advertised by device"
+                } else {
+                    "standard fallback"
+                },
+                result.port,
+                result.fault,
             ));
             if !result.categories.is_empty() {
-                ui.label(format!("ONVIF capabilities: {}", result.categories.join(", ")));
+                ui.label(format!(
+                    "ONVIF capabilities: {}",
+                    result.categories.join(", ")
+                ));
                 ui.label(format!(
                     "Same-host media service advertised: {} (not verified video)",
-                    if result.same_host_media { "yes" } else { "not confirmed" },
+                    if result.same_host_media {
+                        "yes"
+                    } else {
+                        "not confirmed"
+                    },
                 ));
             }
             if ui.button("Copy safe ONVIF diagnostic").on_hover_text(
