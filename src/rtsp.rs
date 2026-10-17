@@ -547,4 +547,122 @@ mod tests {
             "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n";
         assert_eq!(codecs(body), ["H264", "H265"]);
     }
+    #[test]
+    fn challenge_summary_does_not_disclose_realm_or_nonce() {
+        let challenge = "Digest realm=\"private-location\", nonce=\"sensitive-nonce\", algorithm=MD5-sess, qop=\"auth,auth-int\", stale=true";
+        let summary = summarize_challenge(challenge);
+        assert!(summary.contains("algorithm=MD5-sess"));
+        assert!(summary.contains("qop=auth available"));
+        assert!(summary.contains("stale=yes"));
+        assert!(!summary.contains("private-location"));
+        assert!(!summary.contains("sensitive-nonce"));
+    }
+
+    #[test]
+    fn md5_sess_without_qop_includes_required_client_nonce() {
+        let header = digest_authorization(
+            "Digest realm=\"camera\", nonce=\"abc123\", algorithm=MD5-sess",
+            &Credentials { username: "testuser".into(), password: "not-exported".into() },
+            "DESCRIBE", "rtsp://127.0.0.1:8554/live",
+        ).unwrap();
+        assert!(header.contains("cnonce=\""));
+        assert!(!header.contains("qop=auth"));
+        assert!(!header.contains("not-exported"));
+    }
+
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut bytes = Vec::new();
+        let mut buf = [0u8; 1024];
+        while !bytes.ends_with(b"\r\n\r\n") {
+            let count = stream.read(&mut buf).expect("mock RTSP request read");
+            assert!(count > 0, "unexpected RTSP client close");
+            bytes.extend_from_slice(&buf[..count]);
+            assert!(bytes.len() < 8192, "unexpectedly large request");
+        }
+        String::from_utf8(bytes).unwrap()
+    }
+
+    #[test]
+    fn mock_camera_digest_retry_reuses_describe_socket_and_reports_statuses() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut options, _) = listener.accept().unwrap();
+            let first = read_request(&mut options);
+            assert!(first.starts_with("OPTIONS rtsp://127.0.0.1:"));
+            options.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n").unwrap();
+            drop(options);
+            let (mut describe, _) = listener.accept().unwrap();
+            let unauth = read_request(&mut describe);
+            assert!(unauth.starts_with("DESCRIBE rtsp://127.0.0.1:"));
+            assert!(unauth.contains("CSeq: 2\r\n"));
+            assert!(!unauth.contains("Authorization:"));
+            describe.write_all(
+                b"RTSP/1.0 401 Unauthorized\r\nCSeq: 2\r\nWWW-Authenticate: Digest realm=\"private\", nonce=\"abc123\", qop=\"auth\"\r\nContent-Length: 0\r\n\r\n"
+            ).unwrap();
+            // The second DESCRIBE must arrive on the same socket as the
+            // challenge, with a new CSeq and a Digest auth header.
+            let retry = read_request(&mut describe);
+            assert!(retry.starts_with("DESCRIBE rtsp://127.0.0.1:"));
+            assert!(retry.contains("CSeq: 3\r\n"));
+            assert!(retry.contains("Authorization: Digest "));
+            assert!(retry.contains("response=\""));
+            assert!(!retry.contains("test-password"));
+            let sdp = b"v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n";
+            let reply = format!(
+                "RTSP/1.0 200 OK\r\nCSeq: 3\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n",
+                sdp.len()
+            );
+            describe.write_all(reply.as_bytes()).unwrap();
+            describe.write_all(sdp).unwrap();
+        });
+        let result = inspect(
+            Ipv4Addr::LOCALHOST,
+            port,
+            "/live".into(),
+            Some(Credentials { username: "testuser".into(), password: "test-password".into() }),
+        );
+        server.join().unwrap();
+        assert_eq!(result.options_status, Some(200));
+        assert_eq!(result.initial_describe_status, Some(401));
+        assert!(result.retry_attempted);
+        assert_eq!(result.authenticated_retry_status, Some(200));
+        assert!(result.sdp_received);
+        assert_eq!(result.codecs, ["H264"]);
+        assert!(!result.auth_diagnostic.contains("test-password"));
+        assert!(!result.challenge_summary.as_deref().unwrap().contains("private"));
+    }
+
+    #[test]
+    fn mock_camera_rejected_digest_is_reported_as_actual_retry_not_bad_password_proof() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut options, _) = listener.accept().unwrap();
+            let _ = read_request(&mut options);
+            options.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 0\r\n\r\n").unwrap();
+            drop(options);
+            let (mut describe, _) = listener.accept().unwrap();
+            let _ = read_request(&mut describe);
+            describe.write_all(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 2\r\nWWW-Authenticate: Digest realm=\"private\", nonce=\"abc123\"\r\nContent-Length: 0\r\n\r\n").unwrap();
+            let retry = read_request(&mut describe);
+            assert!(retry.contains("Authorization: Digest "));
+            describe.write_all(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 3\r\nWWW-Authenticate: Digest realm=\"private\", nonce=\"next\", stale=true\r\nContent-Length: 0\r\n\r\n").unwrap();
+        });
+        let result = inspect(
+            Ipv4Addr::LOCALHOST, port, "/".into(),
+            Some(Credentials { username: "testuser".into(), password: "secret".into() }),
+        );
+        server.join().unwrap();
+        assert_eq!(result.initial_describe_status, Some(401));
+        assert_eq!(result.authenticated_retry_status, Some(401));
+        assert_eq!(result.describe_status, Some(401));
+        assert!(result.retry_attempted);
+        assert!(result.challenge_summary.as_deref().unwrap().contains("stale=yes"));
+        assert!(!result.auth_diagnostic.to_lowercase().contains("wrong password"));
+    }
+
 }
