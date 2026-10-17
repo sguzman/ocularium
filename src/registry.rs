@@ -56,7 +56,6 @@ impl CameraApp {
     }
 }
 
-
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CameraMetadata {
     #[serde(default)]
@@ -73,7 +72,12 @@ pub struct CameraMetadata {
 impl CameraMetadata {
     pub fn cleaned(&self) -> Self {
         fn clean(input: &str, max: usize) -> String {
-            input.trim().chars().filter(|ch| !ch.is_control()).take(max).collect()
+            input
+                .trim()
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(max)
+                .collect()
         }
         Self {
             model: clean(&self.model, 80),
@@ -176,8 +180,10 @@ impl Registry {
         let id = camera_key(scope, device);
         let mut next = self.clone();
         let metadata = metadata.cleaned();
-        if role == CameraRole::Unreviewed && app == CameraApp::Unknown
-            && metadata == CameraMetadata::default() {
+        if role == CameraRole::Unreviewed
+            && app == CameraApp::Unknown
+            && metadata == CameraMetadata::default()
+        {
             next.camera_profiles.remove(&id);
         } else {
             next.camera_profiles.insert(
@@ -214,7 +220,10 @@ impl Registry {
         {
             use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
             let mut file = fs::OpenOptions::new()
-                .write(true).create(true).truncate(true).mode(0o600)
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
                 .open(&tmp)?;
             file.set_permissions(fs::Permissions::from_mode(0o600))?;
             use std::io::Write as _;
@@ -340,8 +349,16 @@ mod tests {
             serial: "example-private-serial".into(),
         };
         assert_eq!(metadata.cleaned().model, "CQ1F");
-        assert_eq!(CameraMetadata { serial: "x".repeat(130), ..Default::default() }
-            .cleaned().serial.len(), 120);
+        assert_eq!(
+            CameraMetadata {
+                serial: "x".repeat(130),
+                ..Default::default()
+            }
+            .cleaned()
+            .serial
+            .len(),
+            120
+        );
         let encoded = serde_json::to_string(&metadata).unwrap();
         let decoded: CameraMetadata = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, metadata);

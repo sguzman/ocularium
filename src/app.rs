@@ -597,14 +597,29 @@ impl OculariumApp {
     }
 
     fn local_video_evidence(&self, device: &Device) -> &'static str {
-        if self.snapshot_texture.as_ref().is_some_and(|(ip, _, _, _)| *ip == device.ip) {
+        if self
+            .snapshot_texture
+            .as_ref()
+            .is_some_and(|(ip, _, _, _)| *ip == device.ip)
+        {
             "One frame decoded in this session; not continuous playback"
-        } else if self.inspections.values().any(|r| r.ip == device.ip && r.sdp_received) {
+        } else if self
+            .inspections
+            .values()
+            .any(|r| r.ip == device.ip && r.sdp_received)
+        {
             "RTSP SDP returned; playable video not yet verified"
-        } else if self.inspections.values().any(|r| r.ip == device.ip
-            && r.authenticated_retry_status == Some(401)) {
+        } else if self
+            .inspections
+            .values()
+            .any(|r| r.ip == device.ip && r.authenticated_retry_status == Some(401))
+        {
             "RTSP authenticated request rejected; account/path unresolved"
-        } else if self.onvif_results.get(&device.ip).is_some_and(|r| r.same_host_media) {
+        } else if self
+            .onvif_results
+            .get(&device.ip)
+            .is_some_and(|r| r.same_host_media)
+        {
             "ONVIF Media advertised; playable video not verified"
         } else if device.rtsp_responded {
             "RTSP service responded; video not verified"
