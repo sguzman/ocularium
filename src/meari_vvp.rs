@@ -67,7 +67,10 @@ pub fn encode_command(
     if auth.host_key.is_empty() || auth.host_key.len() > 256 || !auth.host_key.is_ascii() {
         return Err("Invalid authenticated host key");
     }
-    if auth.licence_id.is_some_and(|s| s.is_empty() || s.len() > 128 || !s.is_ascii()) {
+    if auth
+        .licence_id
+        .is_some_and(|s| s.is_empty() || s.len() > 128 || !s.is_ascii())
+    {
         return Err("Invalid authenticated licence ID");
     }
     let key = if auth.host_key.len() > 32 {
@@ -134,7 +137,11 @@ pub enum FrameError {
 }
 
 fn le_u32(bytes: &[u8], pos: usize) -> u32 {
-    u32::from_le_bytes(bytes[pos..pos + 4].try_into().expect("validated header length"))
+    u32::from_le_bytes(
+        bytes[pos..pos + 4]
+            .try_into()
+            .expect("validated header length"),
+    )
 }
 
 /// Parse one plaintext frame from already reassembled media bytes. No
@@ -148,28 +155,71 @@ pub fn parse_frame(data: &[u8]) -> Result<(MediaFrame<'_>, usize), FrameError> {
         return Err(FrameError::Invalid);
     }
     let kind = FrameKind::parse(data[3]).ok_or(FrameError::Invalid)?;
-    let (header_size, payload_len, timestamp_ms, sequence): (usize, usize, Option<u32>, Option<u32>) = match kind {
+    let (header_size, payload_len, timestamp_ms, sequence): (
+        usize,
+        usize,
+        Option<u32>,
+        Option<u32>,
+    ) = match kind {
         FrameKind::Keyframe => {
-            if data.len() < 0x3c { return Err(FrameError::Incomplete); }
-            (0x3c, le_u32(data, 0x38) as usize, Some(le_u32(data, 0x30)), Some(le_u32(data, 0x10)))
+            if data.len() < 0x3c {
+                return Err(FrameError::Incomplete);
+            }
+            (
+                0x3c,
+                le_u32(data, 0x38) as usize,
+                Some(le_u32(data, 0x30)),
+                Some(le_u32(data, 0x10)),
+            )
         }
         FrameKind::Predicted => {
-            if data.len() < 0x34 { return Err(FrameError::Incomplete); }
-            (0x34, le_u32(data, 0x30) as usize, Some(le_u32(data, 0x28)), Some(le_u32(data, 0x08)))
+            if data.len() < 0x34 {
+                return Err(FrameError::Incomplete);
+            }
+            (
+                0x34,
+                le_u32(data, 0x30) as usize,
+                Some(le_u32(data, 0x28)),
+                Some(le_u32(data, 0x08)),
+            )
         }
         FrameKind::Audio => {
-            if data.len() < 0x34 { return Err(FrameError::Incomplete); }
-            (0x34, le_u32(data, 0x30) as usize, Some(le_u32(data, 0x28)), None)
+            if data.len() < 0x34 {
+                return Err(FrameError::Incomplete);
+            }
+            (
+                0x34,
+                le_u32(data, 0x30) as usize,
+                Some(le_u32(data, 0x28)),
+                None,
+            )
         }
-        FrameKind::Info => {
-            (8, u16::from_le_bytes([data[6], data[7]]) as usize, None, None)
-        }
+        FrameKind::Info => (
+            8,
+            u16::from_le_bytes([data[6], data[7]]) as usize,
+            None,
+            None,
+        ),
     };
-    if payload_len == 0 { return Err(FrameError::MissingLength); }
-    if payload_len > MAX_FRAME { return Err(FrameError::Oversized); }
-    let end = header_size.checked_add(payload_len).ok_or(FrameError::Oversized)?;
+    if payload_len == 0 {
+        return Err(FrameError::MissingLength);
+    }
+    if payload_len > MAX_FRAME {
+        return Err(FrameError::Oversized);
+    }
+    let end = header_size
+        .checked_add(payload_len)
+        .ok_or(FrameError::Oversized)?;
     let payload = data.get(header_size..end).ok_or(FrameError::Incomplete)?;
-    Ok((MediaFrame { kind, timestamp_ms, sequence, payload }, end))
+    Ok((
+        MediaFrame {
+            kind,
+            timestamp_ms,
+            sequence,
+            payload,
+        },
+        end,
+    ))
 }
 
 #[derive(Clone, Debug)]
@@ -179,7 +229,10 @@ pub struct SequenceGate {
 }
 impl Default for SequenceGate {
     fn default() -> Self {
-        Self { last: None, needs_keyframe: true }
+        Self {
+            last: None,
+            needs_keyframe: true,
+        }
     }
 }
 impl SequenceGate {
@@ -191,13 +244,19 @@ impl SequenceGate {
         if !matches!(frame.kind, FrameKind::Keyframe | FrameKind::Predicted) {
             return true;
         }
-        if self.needs_keyframe && frame.kind != FrameKind::Keyframe { return false; }
+        if self.needs_keyframe && frame.kind != FrameKind::Keyframe {
+            return false;
+        }
         if let (Some(previous), Some(seq)) = (self.last, frame.sequence) {
             let delta = seq.wrapping_sub(previous);
-            if delta == 0 || delta > 0x8000_0000 { return false; }
+            if delta == 0 || delta > 0x8000_0000 {
+                return false;
+            }
         }
         self.last = frame.sequence;
-        if frame.kind == FrameKind::Keyframe { self.needs_keyframe = false; }
+        if frame.kind == FrameKind::Keyframe {
+            self.needs_keyframe = false;
+        }
         !self.needs_keyframe
     }
 }
@@ -213,7 +272,7 @@ mod tests {
             FrameKind::Info => 8,
         };
         let mut out = vec![0u8; size + payload.len()];
-        out[..3].copy_from_slice(&[0,0,1]);
+        out[..3].copy_from_slice(&[0, 0, 1]);
         out[3] = match kind {
             FrameKind::Keyframe => 0xfc,
             FrameKind::Predicted => 0xfd,
@@ -239,32 +298,67 @@ mod tests {
 
     #[test]
     fn no_guessed_transport_from_platform() {
-        assert_eq!(Transport::from_device_record(&serde_json::json!({"deviceP2P":"ppcs"})), Transport::Ppcs);
-        assert_eq!(Transport::from_device_record(&serde_json::json!({"deviceP2P":"PPCS"})), Transport::Ppcs);
-        assert_eq!(Transport::from_device_record(&serde_json::json!({"deviceP2P":"webrtc"})), Transport::Signaling);
-        assert_eq!(Transport::from_device_record(&serde_json::json!({"platform":"b81"})), Transport::Unknown);
-        assert_eq!(Transport::from_device_record(&serde_json::json!({})), Transport::Unknown);
+        assert_eq!(
+            Transport::from_device_record(&serde_json::json!({"deviceP2P":"ppcs"})),
+            Transport::Ppcs
+        );
+        assert_eq!(
+            Transport::from_device_record(&serde_json::json!({"deviceP2P":"PPCS"})),
+            Transport::Ppcs
+        );
+        assert_eq!(
+            Transport::from_device_record(&serde_json::json!({"deviceP2P":"webrtc"})),
+            Transport::Signaling
+        );
+        assert_eq!(
+            Transport::from_device_record(&serde_json::json!({"platform":"b81"})),
+            Transport::Unknown
+        );
+        assert_eq!(
+            Transport::from_device_record(&serde_json::json!({})),
+            Transport::Unknown
+        );
     }
 
     #[test]
     fn vvp_start_live_known_digest_and_wire_layout() {
-        let auth = SessionAuth { host_key: "testing-only-host-key", licence_id: Some("TEST-DEVICE-0001") };
-        let settings = CommandOptions { sequence: 7, parameter: 8, channel: 0, stream_id: 105, stream_flag: 1 };
+        let auth = SessionAuth {
+            host_key: "testing-only-host-key",
+            licence_id: Some("TEST-DEVICE-0001"),
+        };
+        let settings = CommandOptions {
+            sequence: 7,
+            parameter: 8,
+            channel: 0,
+            stream_id: 105,
+            stream_flag: 1,
+        };
         let bytes = encode_command(&auth, Command::StartLive, &settings).unwrap();
         assert_eq!(&bytes[0..4], &[0x56, 0x56, 0x50, 0x99]);
-        assert_eq!(u32::from_be_bytes(bytes[12..16].try_into().unwrap()), 0x11ff);
+        assert_eq!(
+            u32::from_be_bytes(bytes[12..16].try_into().unwrap()),
+            0x11ff
+        );
         assert_eq!(&bytes[16..48], b"fae311f6efefda4d33db0998df288273");
-        assert_eq!(&bytes[48..52], &[0,0,0,8]);
-        assert_eq!(&bytes[56..60], &[105,1,0,0]);
-        assert!(encode_command(&SessionAuth { host_key: "", licence_id: None }, Command::Stop, &settings).is_err());
+        assert_eq!(&bytes[48..52], &[0, 0, 0, 8]);
+        assert_eq!(&bytes[56..60], &[105, 1, 0, 0]);
+        assert!(encode_command(
+            &SessionAuth {
+                host_key: "",
+                licence_id: None
+            },
+            Command::Stop,
+            &settings
+        )
+        .is_err());
     }
 
     #[test]
     fn media_parser_handles_concatenated_frames_without_overreads() {
-        let a = frame(FrameKind::Keyframe, 10, &[0,0,1,0x67]);
-        let b = frame(FrameKind::Predicted, 11, &[0,0,1,0x41]);
+        let a = frame(FrameKind::Keyframe, 10, &[0, 0, 1, 0x67]);
+        let b = frame(FrameKind::Predicted, 11, &[0, 0, 1, 0x41]);
         let c = frame(FrameKind::Info, 0, &[42]);
-        let data: Vec<u8> = [a,b,c].concat();
+        let data: Vec<u8> = [a, b, c].concat();
         let mut tail = data.as_slice();
         let mut kinds = Vec::new();
         while !tail.is_empty() {
@@ -276,18 +370,21 @@ mod tests {
             }
             tail = &tail[consumed..];
         }
-        assert_eq!(kinds, vec![FrameKind::Keyframe, FrameKind::Predicted, FrameKind::Info]);
+        assert_eq!(
+            kinds,
+            vec![FrameKind::Keyframe, FrameKind::Predicted, FrameKind::Info]
+        );
     }
 
     #[test]
     fn media_parser_rejects_truncation_and_oversize() {
-        assert_eq!(parse_frame(&[0;3]), Err(FrameError::Incomplete));
-        assert_eq!(parse_frame(&[0;8]), Err(FrameError::Invalid));
-        let a = frame(FrameKind::Keyframe, 5, &[1,2,3]);
+        assert_eq!(parse_frame(&[0; 3]), Err(FrameError::Incomplete));
+        assert_eq!(parse_frame(&[0; 8]), Err(FrameError::Invalid));
+        let a = frame(FrameKind::Keyframe, 5, &[1, 2, 3]);
         assert_eq!(parse_frame(&a[..0x18]), Err(FrameError::Incomplete));
-        assert_eq!(parse_frame(&a[..a.len()-1]), Err(FrameError::Incomplete));
+        assert_eq!(parse_frame(&a[..a.len() - 1]), Err(FrameError::Incomplete));
         let mut big = a.clone();
-        big[0x38..0x3c].copy_from_slice(&((MAX_FRAME as u32)+1).to_le_bytes());
+        big[0x38..0x3c].copy_from_slice(&((MAX_FRAME as u32) + 1).to_le_bytes());
         assert_eq!(parse_frame(&big), Err(FrameError::Oversized));
         let mut no_len = a;
         no_len[0x38..0x3c].copy_from_slice(&0u32.to_le_bytes());
@@ -298,7 +395,7 @@ mod tests {
     fn sequence_gate_requires_keyframe_and_prevents_replays() {
         let k = frame(FrameKind::Keyframe, u32::MAX, &[1]);
         let p = frame(FrameKind::Predicted, 0, &[2]);
-        let b = frame(FrameKind::Predicted, u32::MAX-1, &[2]);
+        let b = frame(FrameKind::Predicted, u32::MAX - 1, &[2]);
         let (key, _) = parse_frame(&k).unwrap();
         let (next, _) = parse_frame(&p).unwrap();
         let (back, _) = parse_frame(&b).unwrap();

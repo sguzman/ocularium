@@ -8,9 +8,9 @@ mod identify;
 mod identity;
 mod local_stream;
 // Protocol groundwork has intentionally no network integration yet.
+mod mdns;
 #[allow(dead_code)]
 mod meari_vvp;
-mod mdns;
 mod neighbor_history;
 mod neighbor_watch;
 mod onvif_capabilities;
