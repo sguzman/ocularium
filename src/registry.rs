@@ -1,14 +1,77 @@
 //! Persistent user-created labels. This intentionally does not cache online
 //! status, port results or credentials: each scan must provide fresh evidence.
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, env, fs, io, path::PathBuf};
+use std::{collections::BTreeMap, env, fs, io, net::Ipv4Addr, path::PathBuf};
 
-use crate::discovery::Device;
+use crate::{discovery::{Device, Scope}, history};
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CameraRole {
+    #[default]
+    Unreviewed,
+    Possible,
+    UserConfirmed,
+    NotCamera,
+}
+
+impl CameraRole {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unreviewed => "Not reviewed",
+            Self::Possible => "Possible camera (user)",
+            Self::UserConfirmed => "Camera (user-confirmed)",
+            Self::NotCamera => "Not a camera (user)",
+        }
+    }
+
+    pub fn marked_camera(self) -> bool {
+        matches!(self, Self::Possible | Self::UserConfirmed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CameraApp {
+    #[default]
+    Unknown,
+    Anran,
+    VicoHome,
+    Other,
+    NoApp,
+}
+
+impl CameraApp {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Not identified",
+            Self::Anran => "ANRAN (user)",
+            Self::VicoHome => "VicoHome (user)",
+            Self::Other => "Another app (user)",
+            Self::NoApp => "No app / local (user)",
+        }
+    }
+}
+
+/// User assertions only. A saved profile never proves online status, physical
+/// identity, ONVIF support, camera credentials, or a playable video stream.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CameraProfile {
+    pub scope: String,
+    pub identity: String,
+    pub last_ip: Ipv4Addr,
+    pub mac: Option<String>,
+    pub role: CameraRole,
+    pub app: CameraApp,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Registry {
     #[serde(default)]
     aliases: BTreeMap<String, String>,
+    #[serde(default)]
+    camera_profiles: BTreeMap<String, CameraProfile>,
 }
 
 impl Registry {
@@ -51,6 +114,44 @@ impl Registry {
         self.save()
     }
 
+
+    pub fn camera_profile<'a>(&'a self, scope: &Scope, device: &Device) -> Option<&'a CameraProfile> {
+        self.camera_profiles.get(&camera_key(scope, device))
+    }
+
+    pub fn camera_profiles_for_scope(&self, scope: &Scope) -> Vec<&CameraProfile> {
+        let scope_id = history::scope_id(scope);
+        let mut rows: Vec<_> = self.camera_profiles.values()
+            .filter(|profile| profile.scope == scope_id).collect();
+        rows.sort_by_key(|profile| (profile.last_ip, profile.identity.clone()));
+        rows
+    }
+
+    pub fn set_camera_profile(
+        &mut self,
+        scope: &Scope,
+        device: &Device,
+        role: CameraRole,
+        app: CameraApp,
+    ) -> io::Result<()> {
+        let id = camera_key(scope, device);
+        let mut next = self.clone();
+        if role == CameraRole::Unreviewed && app == CameraApp::Unknown {
+            next.camera_profiles.remove(&id);
+        } else {
+            next.camera_profiles.insert(id.clone(), CameraProfile {
+                scope: history::scope_id(scope),
+                identity: id,
+                last_ip: device.ip,
+                mac: device.mac.as_ref().map(|s| s.to_ascii_lowercase()),
+                role, app,
+            });
+        }
+        next.save()?;
+        *self = next;
+        Ok(())
+    }
+
     fn save(&self) -> io::Result<()> {
         let path = registry_path()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "HOME unavailable"))?;
@@ -64,6 +165,23 @@ impl Registry {
         fs::write(&tmp, bytes)?;
         fs::rename(tmp, path)
     }
+}
+
+
+fn camera_key(scope: &Scope, device: &Device) -> String {
+    // Never silently migrate IP-only assertions to a later MAC discovery:
+    // that could attach a camera identity to a reassigned DHCP lease.
+    let identifier = match device.mac.as_deref() {
+        Some(mac) if mac.len() == 17
+            && mac != "00:00:00:00:00:00"
+            && mac.split(':').count() == 6
+            && mac.bytes().all(|b| b.is_ascii_hexdigit() || b == b':') =>
+        {
+            format!("mac:{}", mac.to_ascii_lowercase())
+        }
+        _ => format!("ip:{}", device.ip),
+    };
+    format!("{}|{identifier}", history::scope_id(scope))
 }
 
 fn key(device: &Device) -> String {
@@ -86,6 +204,55 @@ mod tests {
     use super::*;
     use std::net::Ipv4Addr;
 
+
+    fn scope(base: [u8;3]) -> Scope {
+        Scope {
+            interface: "eno1".into(),
+            local_ip: Ipv4Addr::new(base[0],base[1],base[2],53),
+            base,
+        }
+    }
+
+    #[test]
+    fn camera_profiles_are_mac_stable_and_scoped() {
+        let mut registry = Registry::default();
+        let mut first = Device::new(Ipv4Addr::new(192,168,0,103));
+        first.mac = Some("AA:BB:CC:DD:EE:FF".into());
+        let a = scope([192,168,0]);
+        let b = scope([192,168,1]);
+        // Test insertion separately from disk persistence.
+        let key = camera_key(&a, &first);
+        registry.camera_profiles.insert(key.clone(), CameraProfile {
+            scope: history::scope_id(&a), identity: key,
+            last_ip: first.ip, mac: first.mac.clone(),
+            role: CameraRole::UserConfirmed, app: CameraApp::Anran,
+        });
+        let mut moved = Device::new(Ipv4Addr::new(192,168,0,199));
+        moved.mac = Some("aa:bb:cc:dd:ee:ff".into());
+        assert_eq!(registry.camera_profile(&a, &moved).unwrap().role, CameraRole::UserConfirmed);
+        assert!(registry.camera_profile(&b, &moved).is_none());
+        assert_eq!(registry.camera_profiles_for_scope(&a).len(), 1);
+    }
+
+    #[test]
+    fn ip_fallback_cannot_silently_claim_new_mac() {
+        let network = scope([192,168,0]);
+        let first = Device::new(Ipv4Addr::new(192,168,0,103));
+        let mut later = first.clone();
+        later.mac = Some("aa:bb:cc:dd:ee:ff".into());
+        assert_ne!(camera_key(&network,&first), camera_key(&network,&later));
+    }
+
+    #[test]
+    fn previous_label_registry_json_remains_readable() {
+        let old = r#"{"aliases":{"mac:aa:bb:cc:dd:ee:ff":"Front gate"}}"#;
+        let registry: Registry = serde_json::from_str(old).unwrap();
+        assert!(registry.camera_profiles.is_empty());
+        let json = serde_json::to_string(&registry).unwrap();
+        let loaded: Registry = serde_json::from_str(&json).unwrap();
+        assert!(loaded.camera_profiles.is_empty());
+        assert_eq!(registry.aliases, loaded.aliases);
+    }
     #[test]
     fn uses_stable_mac_when_available() {
         let mut original = Device::new(Ipv4Addr::new(192, 168, 0, 103));
