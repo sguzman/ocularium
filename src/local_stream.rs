@@ -29,28 +29,44 @@ impl LocalEndpoint {
     pub fn parse(value: &str) -> Result<Self, &'static str> {
         // No DNS rebinding, userinfo, tokens or credentials in URL parameters.
         if value.len() > MAX_URL || !value.is_ascii() || !value.starts_with("http://") {
-            return Err("Enter an explicit http://private-IPv4:port/path URL (maximum 512 characters)");
+            return Err(
+                "Enter an explicit http://private-IPv4:port/path URL (maximum 512 characters)",
+            );
         }
         let remainder = &value[7..];
-        let (authority, tail) = remainder.split_once('/').ok_or("A stream path is required")?;
+        let (authority, tail) = remainder
+            .split_once('/')
+            .ok_or("A stream path is required")?;
         if authority.contains(['@', '[', ']', '%', '?', '#']) || authority.is_empty() {
             return Err("Stream authority must contain an IPv4 address without credentials");
         }
-        let (address, port) = authority.rsplit_once(':').ok_or("An explicit stream port is required")?;
-        let address = address.parse::<Ipv4Addr>().map_err(|_| "A numeric IPv4 address is required")?;
+        let (address, port) = authority
+            .rsplit_once(':')
+            .ok_or("An explicit stream port is required")?;
+        let address = address
+            .parse::<Ipv4Addr>()
+            .map_err(|_| "A numeric IPv4 address is required")?;
         let port = port.parse::<u16>().map_err(|_| "Invalid stream port")?;
-        if port == 0 || !(address.is_private() || address.is_loopback())
-            || address.is_link_local() || address.is_multicast()
+        if port == 0
+            || !(address.is_private() || address.is_loopback())
+            || address.is_link_local()
+            || address.is_multicast()
         {
             return Err("Only loopback or private LAN IPv4 endpoints are permitted");
         }
         let path = format!("/{tail}");
-        if path.len() > 400 || !path.bytes().all(|byte|
-            byte.is_ascii_graphic() && !b"?#@\\%".contains(&byte)
-        ) {
+        if path.len() > 400
+            || !path
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && !b"?#@\\%".contains(&byte))
+        {
             return Err("Path must be printable and must not contain secrets, query parameters, or fragments");
         }
-        Ok(Self { address, port, path })
+        Ok(Self {
+            address,
+            port,
+            path,
+        })
     }
 
     fn url(&self) -> String {
@@ -67,13 +83,34 @@ pub struct FrameResult {
 
 fn ffmpeg_arguments() -> Vec<&'static str> {
     vec![
-        "-hide_banner", "-nostdin", "-loglevel", "error",
-        "-probesize", "1048576", "-analyzeduration", "2000000",
-        "-f", "mpegts", "-i", "pipe:0",
-        "-map", "0:v:0", "-an", "-sn", "-dn",
-        "-frames:v", "1", "-threads", "1",
-        "-vf", "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
-        "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1",
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-probesize",
+        "1048576",
+        "-analyzeduration",
+        "2000000",
+        "-f",
+        "mpegts",
+        "-i",
+        "pipe:0",
+        "-map",
+        "0:v:0",
+        "-an",
+        "-sn",
+        "-dn",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
+        "-vf",
+        "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
+        "pipe:1",
     ]
 }
 
@@ -100,7 +137,10 @@ fn do_capture(endpoint: &LocalEndpoint) -> Result<Vec<u8>, String> {
             ureq::Error::Transport(_) => "Could not connect to the local stream endpoint".to_owned(),
         })?;
     if response.status() != 200 {
-        return Err(format!("Local stream returned HTTP {}; no redirects were followed", response.status()));
+        return Err(format!(
+            "Local stream returned HTTP {}; no redirects were followed",
+            response.status()
+        ));
     }
     // Fail explicitly rather than unintentionally downloading HTML/error pages.
     if response.header("Content-Type").is_some_and(|content_type| {
@@ -116,10 +156,12 @@ fn do_capture(endpoint: &LocalEndpoint) -> Result<Vec<u8>, String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|err| if err.kind() == std::io::ErrorKind::NotFound {
-            "ffmpeg is missing; install your distribution's ffmpeg package".to_string()
-        } else {
-            format!("Cannot start local video decoder: {err}")
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                "ffmpeg is missing; install your distribution's ffmpeg package".to_string()
+            } else {
+                format!("Cannot start local video decoder: {err}")
+            }
         })?;
 
     let stdin = child.stdin.take().ok_or("Decoder stdin unavailable")?;
@@ -138,7 +180,8 @@ fn do_capture(endpoint: &LocalEndpoint) -> Result<Vec<u8>, String> {
     });
     let consumer = thread::spawn(move || {
         let mut bytes = Vec::with_capacity(crate::snapshot::PIXEL_BYTES);
-        let _ = stdout.take((crate::snapshot::PIXEL_BYTES + 1) as u64)
+        let _ = stdout
+            .take((crate::snapshot::PIXEL_BYTES + 1) as u64)
             .read_to_end(&mut bytes);
         bytes
     });
@@ -177,8 +220,16 @@ pub fn capture(identity: String, url: String) -> FrameResult {
         .map_err(str::to_owned)
         .and_then(|endpoint| do_capture(&endpoint));
     match frame {
-        Ok(frame) => FrameResult { identity, frame: Some(frame), error: None },
-        Err(error) => FrameResult { identity, frame: None, error: Some(error) },
+        Ok(frame) => FrameResult {
+            identity,
+            frame: Some(frame),
+            error: None,
+        },
+        Err(error) => FrameResult {
+            identity,
+            frame: None,
+            error: Some(error),
+        },
     }
 }
 
@@ -188,7 +239,12 @@ mod tests {
 
     #[test]
     fn explicit_ipv4_only_and_no_tokens_or_cloud() {
-        assert_eq!(LocalEndpoint::parse("http://127.0.0.1:8080/stream").unwrap().port, 8080);
+        assert_eq!(
+            LocalEndpoint::parse("http://127.0.0.1:8080/stream")
+                .unwrap()
+                .port,
+            8080
+        );
         assert!(LocalEndpoint::parse("http://192.168.0.107:8090/live.ts").is_ok());
         for url in [
             "https://192.168.0.107:8090/live",
@@ -200,7 +256,10 @@ mod tests {
             "http://192.168.0.107:8090/live\nHeader: attack",
             "http://192.168.0.107:0/stream",
         ] {
-            assert!(LocalEndpoint::parse(url).is_err(), "must reject untrusted URL form");
+            assert!(
+                LocalEndpoint::parse(url).is_err(),
+                "must reject untrusted URL form"
+            );
         }
     }
 
@@ -208,7 +267,9 @@ mod tests {
     fn decoder_gets_bytes_only_never_endpoint_url() {
         let args = ffmpeg_arguments();
         assert!(args.windows(2).any(|pair| pair == ["-i", "pipe:0"]));
-        assert!(!args.iter().any(|arg| arg.contains("http") || arg.contains("password")));
+        assert!(!args
+            .iter()
+            .any(|arg| arg.contains("http") || arg.contains("password")));
         assert!(validate_pixels(vec![0; crate::snapshot::PIXEL_BYTES]).is_ok());
         assert!(validate_pixels(vec![0; 100]).is_err());
     }

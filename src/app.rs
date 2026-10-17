@@ -18,9 +18,9 @@ use crate::{
     discovery::{self, DeepReport, Device, Event, Scope},
     dns,
     history::{self, HistoryStore},
+    local_stream::{self, FrameResult},
     neighbor_history::NeighborArchive,
     neighbor_watch::NeighborWatch,
-    local_stream::{self, FrameResult},
     onvif_capabilities::{self, CapabilityResult},
     registry::{CameraApp, CameraMetadata, CameraRole, Registry},
     rtsp::{self, RtspInspection},
@@ -380,7 +380,8 @@ impl OculariumApp {
                 Err(mpsc::TryRecvError::Empty) => self.local_stream_receiver = Some(rx),
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.local_stream_busy = None;
-                    self.messages.push("Local stream worker stopped unexpectedly".into());
+                    self.messages
+                        .push("Local stream worker stopped unexpectedly".into());
                 }
             }
         }
@@ -2090,9 +2091,7 @@ impl eframe::App for OculariumApp {
             if let Some(pixels) = frame.frame {
                 let texture = ctx.load_texture(
                     "ocularium-local-mpegts-frame",
-                    egui::ColorImage::from_rgb(
-                        [snapshot::WIDTH, snapshot::HEIGHT], &pixels
-                    ),
+                    egui::ColorImage::from_rgb([snapshot::WIDTH, snapshot::HEIGHT], &pixels),
                     egui::TextureOptions::LINEAR,
                 );
                 self.local_stream_texture = Some((frame.identity, texture));
@@ -2101,7 +2100,7 @@ impl eframe::App for OculariumApp {
                 self.local_stream_texture = None;
                 self.local_stream_error = Some((
                     frame.identity,
-                    frame.error.unwrap_or_else(|| "No frame decoded".into())
+                    frame.error.unwrap_or_else(|| "No frame decoded".into()),
                 ));
             }
         }
