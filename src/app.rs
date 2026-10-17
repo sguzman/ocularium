@@ -21,7 +21,7 @@ use crate::{
     neighbor_history::NeighborArchive,
     neighbor_watch::NeighborWatch,
     onvif_capabilities::{self, CapabilityResult},
-    registry::{CameraApp, CameraRole, Registry},
+    registry::{CameraApp, CameraMetadata, CameraRole, Registry},
     rtsp::{self, RtspInspection},
     snapshot::{self, SnapshotResult},
 };
@@ -60,6 +60,8 @@ pub struct OculariumApp {
     alias_edit: String,
     camera_role_edit: CameraRole,
     camera_app_edit: CameraApp,
+    camera_metadata_edit: CameraMetadata,
+    show_camera_serial: bool,
     rtsp_path: String,
     rtsp_username: String,
     show_rtsp_username: bool,
@@ -132,6 +134,8 @@ impl OculariumApp {
             alias_edit: String::new(),
             camera_role_edit: CameraRole::default(),
             camera_app_edit: CameraApp::default(),
+            camera_metadata_edit: CameraMetadata::default(),
+            show_camera_serial: false,
             rtsp_path: "/".into(),
             rtsp_username: String::new(),
             show_rtsp_username: false,
@@ -160,6 +164,8 @@ impl OculariumApp {
         self.alias_edit.clear();
         self.camera_role_edit = CameraRole::default();
         self.camera_app_edit = CameraApp::default();
+        self.camera_metadata_edit = CameraMetadata::default();
+        self.show_camera_serial = false;
         self.rtsp_path = "/".into();
         self.rtsp_username.clear();
         self.show_rtsp_username = false;
@@ -588,6 +594,25 @@ impl OculariumApp {
             .map_or(CameraRole::Unreviewed, |profile| profile.role)
     }
 
+    fn local_video_evidence(&self, device: &Device) -> &'static str {
+        if self.snapshot_texture.as_ref().is_some_and(|(ip, _, _, _)| *ip == device.ip) {
+            "One frame decoded in this session; not continuous playback"
+        } else if self.inspections.values().any(|r| r.ip == device.ip && r.sdp_received) {
+            "RTSP SDP returned; playable video not yet verified"
+        } else if self.inspections.values().any(|r| r.ip == device.ip
+            && r.authenticated_retry_status == Some(401)) {
+            "RTSP authenticated request rejected; account/path unresolved"
+        } else if self.onvif_results.get(&device.ip).is_some_and(|r| r.same_host_media) {
+            "ONVIF Media advertised; playable video not verified"
+        } else if device.rtsp_responded {
+            "RTSP service responded; video not verified"
+        } else if !device.onvif_xaddrs.is_empty() {
+            "ONVIF service advertised; video not verified"
+        } else {
+            "No local video access verified"
+        }
+    }
+
     fn camera_filter_match(&self, device: &Device) -> bool {
         match self.user_camera_role(device) {
             CameraRole::Possible | CameraRole::UserConfirmed => true,
@@ -980,6 +1005,10 @@ impl OculariumApp {
                                     .and_then(|scope| self.registry.camera_profile(scope, d));
                                 self.camera_role_edit = profile.map_or(CameraRole::default(), |p| p.role);
                                 self.camera_app_edit = profile.map_or(CameraApp::default(), |p| p.app);
+                                self.camera_metadata_edit = profile.map_or_else(
+                                    CameraMetadata::default, |p| p.metadata.clone()
+                                );
+                                self.show_camera_serial = false;
                                 self.rtsp_path = "/".into();
                                 self.rtsp_username.clear();
                                 self.rtsp_password.clear();
@@ -1457,7 +1486,7 @@ impl OculariumApp {
         ui.group(|ui| {
             ui.strong("User camera identity and app");
             ui.label(RichText::new(
-                "Set these only from household knowledge. Ocularium will not infer ANRAN/VicoHome from MAC vendor, and a user-confirmed camera is not verified video access."
+                "Household-provided identity only. Managing app, model and serial are not proof of a playable local video stream."
             ).color(MUTED).small());
             ui.horizontal_wrapped(|ui| {
                 ui.label("Camera role");
@@ -1482,20 +1511,47 @@ impl OculariumApp {
                             ui.selectable_value(&mut self.camera_app_edit, app, app.label());
                         }
                     });
-                if ui.button("Save camera identity").clicked() {
-                    if let Some(scope) = self.scopes.get(self.selected_scope) {
-                        match self.registry.set_camera_profile(
-                            scope, &device, self.camera_role_edit, self.camera_app_edit
-                        ) {
-                            Ok(()) => self.status = "Camera identity saved locally (user-reported)".into(),
-                            Err(error) => self.messages.push(format!("Camera identity not saved: {error}")),
-                        }
+            });
+            ui.collapsing("Camera hardware details (optional, local only)", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Model");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.model)
+                        .desired_width(150.0).hint_text("e.g. CQ1F"));
+                    ui.label("Firmware");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.firmware)
+                        .desired_width(150.0));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Platform / MCU");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.platform)
+                        .desired_width(180.0));
+                    ui.label("Serial / device ID");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.serial)
+                        .password(!self.show_camera_serial).desired_width(180.0));
+                    if ui.small_button(if self.show_camera_serial { "Hide" } else { "Show" })
+                        .clicked() {
+                        self.show_camera_serial = !self.show_camera_serial;
+                    }
+                });
+                ui.label(RichText::new(
+                    "Device identifiers are saved only in the local user-private registry; serials are masked by default and excluded from Copy report."
+                ).color(MUTED).small());
+            });
+            if ui.button("Save camera identity").clicked() {
+                if let Some(scope) = self.scopes.get(self.selected_scope) {
+                    match self.registry.set_camera_profile(
+                        scope, &device, self.camera_role_edit, self.camera_app_edit,
+                        &self.camera_metadata_edit,
+                    ) {
+                        Ok(()) => self.status = "Camera identity and hardware details saved locally".into(),
+                        Err(error) => self.messages.push(format!("Camera identity not saved: {error}")),
                     }
                 }
-            });
+            }
+            ui.label(format!("Local video: {}", self.local_video_evidence(&device)));
             if device.mac.is_none() {
                 ui.label(RichText::new(
-                    "No MAC available. This identity is bound to the IP on this LAN and may become stale if the DHCP address changes. It will not silently transfer to a different MAC."
+                    "No MAC available. This identity uses the LAN IP and will not silently transfer to a newly discovered MAC."
                 ).color(MUTED).small());
             }
         });
