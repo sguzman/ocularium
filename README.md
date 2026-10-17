@@ -2,7 +2,7 @@
 
 A local-first **Rust + egui desktop application** for discovering and eventually viewing IP cameras on your own network.
 
-> Status: **0.1.x discovery and device inspection milestone.** The first release inventories LAN devices and identifies camera candidates. It does **not** yet decode video, recover proprietary cloud streams, or verify that an accessible RTSP *video feed* exists.
+> Status: **0.1.x discovery and device inspection milestone.** The app inventories LAN devices and camera candidates. It now offers an optional local CPU-decoded **single RTSP frame** experiment using the installed `ffmpeg` executable, but no continuous video playback, authenticated snapshot decoding, or verified household camera frames yet.
 
 ## Why
 
@@ -17,6 +17,14 @@ cargo run --release
 ```
 
 Ocularium is a native application; it needs **no server**, no cloud login, and no root privileges. It does need network access to your own LAN.
+
+## Experimental single-frame RTSP capture
+
+Select an RTSP-capable discovered device and enter its **exact stream path** (no endpoint guessing). Click **Capture one frame :PORT**. If the local `ffmpeg` executable is installed, Ocularium runs it in a bounded worker to attempt CPU decoding of a single 640 × 360 RGB frame, shown as an in-memory egui texture. Capture is manually triggered, runs at most 12 seconds, and never records, uploads, saves, or includes image pixels in reports.
+
+Capture is **unauthenticated**. The username and password fields are used only by **Test RTSP access**, not by frame capture; no camera credentials are put into subprocess arguments. Streams requiring authentication, proprietary transport, or an unknown RTSP path may fail. A successful OPTIONS or DESCRIBE response does not prove video can be decoded.
+
+Normal discovery, scanning, and RTSP inspection do not require ffmpeg. If the optional executable is missing, Ocularium displays a clear install message. This does not require a separate server or GPU.
 
 ## Discovery in v0.1
 
