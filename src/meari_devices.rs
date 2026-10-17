@@ -4,8 +4,8 @@
 //! github.com/raulrojas22/Ha-CloudPlus-Meari-ANRAN
 //! custom_components/cloudplus/api.py, _collect_devices_from_payload.
 
-use std::collections::BTreeMap;
 use crate::meari_vvp::Transport;
+use std::collections::BTreeMap;
 
 const MAX_JSON_BYTES: usize = 512 * 1024;
 const MAX_RECORDS: usize = 64;
@@ -27,7 +27,9 @@ pub struct AuthorizedCamera {
 
 impl AuthorizedCamera {
     pub fn matches_mac(&self, candidate: &str) -> bool {
-        self.mac.as_deref().zip(normalize_mac(candidate).as_deref())
+        self.mac
+            .as_deref()
+            .zip(normalize_mac(candidate).as_deref())
             .is_some_and(|(a, b)| a == b)
     }
 
@@ -76,7 +78,9 @@ pub struct AuthorizedCatalog {
 }
 
 impl AuthorizedCatalog {
-    pub fn cameras(&self) -> &[AuthorizedCamera] { &self.records }
+    pub fn cameras(&self) -> &[AuthorizedCamera] {
+        &self.records
+    }
 
     pub fn by_mac(&self, mac: &str) -> Option<&AuthorizedCamera> {
         self.records.iter().find(|camera| camera.matches_mac(mac))
@@ -84,8 +88,13 @@ impl AuthorizedCatalog {
 
     pub fn summary(&self) -> CatalogSummary {
         let mut summary = CatalogSummary {
-            cameras: self.records.len(), wired: 0, battery: 0, doorbells: 0,
-            ppcs: 0, signaling: 0, transport_unverified: 0,
+            cameras: self.records.len(),
+            wired: 0,
+            battery: 0,
+            doorbells: 0,
+            ppcs: 0,
+            signaling: 0,
+            transport_unverified: 0,
         };
         for record in &self.records {
             match record.category {
@@ -123,18 +132,30 @@ fn bounded_value(v: Option<&serde_json::Value>) -> Option<String> {
 }
 
 fn normalize_mac(raw: &str) -> Option<String> {
-    let octets = raw.split(':')
-        .map(|chunk| if chunk.len() == 2 {
-            u8::from_str_radix(chunk, 16).ok()
-        } else {
-            None
-        }).collect::<Option<Vec<_>>>()?;
-    if octets.len() != 6 || octets.iter().all(|n| *n == 0)
-        || octets.iter().all(|n| *n == 255) || octets[0] & 1 != 0
+    let octets = raw
+        .split(':')
+        .map(|chunk| {
+            if chunk.len() == 2 {
+                u8::from_str_radix(chunk, 16).ok()
+            } else {
+                None
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if octets.len() != 6
+        || octets.iter().all(|n| *n == 0)
+        || octets.iter().all(|n| *n == 255)
+        || octets[0] & 1 != 0
     {
         return None;
     }
-    Some(octets.iter().map(|n| format!("{n:02x}")).collect::<Vec<_>>().join(":"))
+    Some(
+        octets
+            .iter()
+            .map(|n| format!("{n:02x}"))
+            .collect::<Vec<_>>()
+            .join(":"),
+    )
 }
 
 fn category_for(key: &str) -> Option<Category> {
@@ -158,11 +179,14 @@ fn parse_device(value: &serde_json::Value, category: Option<Category>) -> Option
             Category::Wired
         }
     });
-    let mac = ["mac", "macAddr", "macAddress"].iter()
+    let mac = ["mac", "macAddr", "macAddress"]
+        .iter()
         .filter_map(|key| obj.get(*key).and_then(serde_json::Value::as_str))
         .find_map(normalize_mac);
     Some(AuthorizedCamera {
-        device_id, serial, category,
+        device_id,
+        serial,
+        category,
         transport: Transport::from_device_record(value),
         host_key: bounded_value(obj.get("hostKey")),
         device_uuid: bounded_value(obj.get("deviceUUID")),
@@ -180,12 +204,15 @@ fn insert_camera(
     if let Some(record) = parse_device(value, category) {
         // Duplicate owner/shared-home entries: retain richer session data
         // only when deviceID is identical. Never cross-merge different IDs.
-        let replace = output.get(&record.device_id)
+        let replace = output
+            .get(&record.device_id)
             .is_none_or(|prev| record.completeness() > prev.completeness());
         if replace {
             output.insert(record.device_id.clone(), record);
         }
-        if output.len() > MAX_RECORDS { return Err(CatalogError::TooManyCameras); }
+        if output.len() > MAX_RECORDS {
+            return Err(CatalogError::TooManyCameras);
+        }
     }
     Ok(())
 }
@@ -196,20 +223,28 @@ fn collect(
     depth: usize,
     out: &mut BTreeMap<String, AuthorizedCamera>,
 ) -> Result<(), CatalogError> {
-    if depth > MAX_DEPTH { return Err(CatalogError::InvalidJson); }
+    if depth > MAX_DEPTH {
+        return Err(CatalogError::InvalidJson);
+    }
     match node {
         serde_json::Value::Array(items) => {
-            for value in items { collect(value, category, depth + 1, out)?; }
+            for value in items {
+                collect(value, category, depth + 1, out)?;
+            }
         }
         serde_json::Value::Object(fields) => {
             for (name, child) in fields {
                 if let Some(cat) = category_for(name) {
                     if let Some(items) = child.as_array() {
-                        for item in items { insert_camera(item, Some(cat), out)?; }
+                        for item in items {
+                            insert_camera(item, Some(cat), out)?;
+                        }
                     }
                 } else if name == "deviceList" {
                     if let Some(items) = child.as_array() {
-                        for item in items { insert_camera(item, category, out)?; }
+                        for item in items {
+                            insert_camera(item, category, out)?;
+                        }
                     }
                 } else {
                     collect(child, category, depth + 1, out)?;
@@ -222,9 +257,11 @@ fn collect(
 }
 
 pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog, CatalogError> {
-    if json.len() > MAX_JSON_BYTES { return Err(CatalogError::Oversized); }
-    let value: serde_json::Value = serde_json::from_slice(json)
-        .map_err(|_| CatalogError::InvalidJson)?;
+    if json.len() > MAX_JSON_BYTES {
+        return Err(CatalogError::Oversized);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(json).map_err(|_| CatalogError::InvalidJson)?;
     match value.get("resultCode").and_then(serde_json::Value::as_str) {
         Some("1001") => {}
         Some("1023") => return Err(CatalogError::TemporarilyUnavailable),
@@ -232,7 +269,9 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
     }
     let mut records = BTreeMap::new();
     collect(&value, None, 0, &mut records)?;
-    Ok(AuthorizedCatalog { records: records.into_values().collect() })
+    Ok(AuthorizedCatalog {
+        records: records.into_values().collect(),
+    })
 }
 
 #[cfg(test)]
@@ -262,11 +301,22 @@ mod tests {
         assert_eq!(summary.battery, 1);
         assert!(catalog.by_mac("70:3a:2d:32:f7:d8").is_some());
         assert!(catalog.by_mac("70:3a:2d:32:f7:d9").is_none());
-        assert_eq!(catalog.by_mac("70:3a:2d:32:f7:d8").unwrap()
-            .host_key.as_deref(), Some("private-host-key"));
+        assert_eq!(
+            catalog
+                .by_mac("70:3a:2d:32:f7:d8")
+                .unwrap()
+                .host_key
+                .as_deref(),
+            Some("private-host-key")
+        );
         let report = summary.safe_text();
-        for secret in ["private-device-A","private-account-token",
-            "private-host-key","private-bootstrap","70:3a:2d:32:f7:d8"] {
+        for secret in [
+            "private-device-A",
+            "private-account-token",
+            "private-host-key",
+            "private-bootstrap",
+            "70:3a:2d:32:f7:d8",
+        ] {
             assert!(!report.contains(secret));
         }
     }
@@ -278,21 +328,33 @@ mod tests {
             r#"{"resultCode":"401"}"#,
             r#"{"result":{"ipc":[]}}"#,
         ] {
-            assert_eq!(parse_authenticated_device_list(response.as_bytes()).err(),
-                Some(CatalogError::NotAuthenticated));
+            assert_eq!(
+                parse_authenticated_device_list(response.as_bytes()).err(),
+                Some(CatalogError::NotAuthenticated)
+            );
         }
-        assert_eq!(parse_authenticated_device_list(br#"{"resultCode":"1023"}"#).err(),
-            Some(CatalogError::TemporarilyUnavailable));
-        assert_eq!(parse_authenticated_device_list(b"bad json").err(),
-            Some(CatalogError::InvalidJson));
-        assert_eq!(parse_authenticated_device_list(&vec![0; MAX_JSON_BYTES + 1]).err(),
-            Some(CatalogError::Oversized));
+        assert_eq!(
+            parse_authenticated_device_list(br#"{"resultCode":"1023"}"#).err(),
+            Some(CatalogError::TemporarilyUnavailable)
+        );
+        assert_eq!(
+            parse_authenticated_device_list(b"bad json").err(),
+            Some(CatalogError::InvalidJson)
+        );
+        assert_eq!(
+            parse_authenticated_device_list(&vec![0; MAX_JSON_BYTES + 1]).err(),
+            Some(CatalogError::Oversized)
+        );
     }
 
     #[test]
     fn model_and_ip_cannot_claim_identity_without_matching_mac() {
-        for invalid in ["00:00:00:00:00:00","ff:ff:ff:ff:ff:ff",
-            "01:00:00:00:00:00","70-3a-2d-32-f7-d8"] {
+        for invalid in [
+            "00:00:00:00:00:00",
+            "ff:ff:ff:ff:ff:ff",
+            "01:00:00:00:00:00",
+            "70-3a-2d-32-f7-d8",
+        ] {
             assert!(normalize_mac(invalid).is_none());
         }
         let payload = br#"{"resultCode":"1001","result":{"ipc":[
@@ -311,13 +373,17 @@ mod tests {
             nested = serde_json::json!({"nest":nested});
         }
         let response = serde_json::json!({"resultCode":"1001","result":nested});
-        assert_eq!(parse_authenticated_device_list(response.to_string().as_bytes()).err(),
-            Some(CatalogError::InvalidJson));
+        assert_eq!(
+            parse_authenticated_device_list(response.to_string().as_bytes()).err(),
+            Some(CatalogError::InvalidJson)
+        );
         let entries: Vec<_> = (0..=MAX_RECORDS)
             .map(|n| serde_json::json!({"deviceID":n,"snNum":format!("test-{n}")}))
             .collect();
         let response = serde_json::json!({"resultCode":"1001","result":{"deviceList":entries}});
-        assert_eq!(parse_authenticated_device_list(response.to_string().as_bytes()).err(),
-            Some(CatalogError::TooManyCameras));
+        assert_eq!(
+            parse_authenticated_device_list(response.to_string().as_bytes()).err(),
+            Some(CatalogError::TooManyCameras)
+        );
     }
 }
