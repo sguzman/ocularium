@@ -18,6 +18,14 @@ cargo run --release
 
 Ocularium is a native application; it needs **no server**, no cloud login, and no root privileges. It does need network access to your own LAN.
 
+## Household camera identity catalog
+
+Ocularium keeps **network evidence** separate from **user-provided camera identification**. Select any discovered device and use **User camera identity and app** to mark it *Possible camera*, *Camera (user-confirmed)*, *Not a camera*, or *Not reviewed*. Assign the app only when known: **ANRAN**, **VicoHome**, another app, no app, or not identified. These annotations are never inferred from OUI/chipset vendors or open ports.
+
+The **Household camera inventory** section includes user-marked possible/confirmed cameras even when they were **not observed in the current scan**. Device-table filters include user-marked cameras while preserving the separate protocol evidence and explaining when a device was user-identified. The catalog is persisted locally in the existing `$XDG_DATA_HOME/ocularium/registry.json` (or `~/.local/share/ocularium/registry.json`), with backward-compatible existing aliases. Identities are scoped to the selected LAN and keyed by MAC when available, falling back to IP; IP-only records are explicitly cautioned and are not silently transferred to newly identified MACs.
+
+No credentials, video frames, app tokens, or cloud accounts are saved. User confirmation means someone identified the camera, **not** that RTSP/ONVIF works, that the device is connected, or that Ocularium can play video.
+
 ## ONVIF capability investigation
 
 Select a discovered device and click **Inspect advertised ONVIF** if it supplied a WS-Discovery ONVIF URL. Ocularium checks only one same-host, plain-HTTP advertised endpoint; it never follows off-host URLs, redirects, or handles credentials. If the device did not advertise an ONVIF service, the UI instead offers **Check standard ONVIF service**, which sends one unauthenticated SOAP GetCapabilities request to the conventional `http://DEVICE_IP/onvif/device_service` endpoint on port 80. It does not sweep ports or attempt password guessing.
