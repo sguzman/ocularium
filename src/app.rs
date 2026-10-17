@@ -754,6 +754,46 @@ impl OculariumApp {
         });
     }
 
+    fn camera_inventory_panel(&self, ui: &mut egui::Ui) {
+        let Some(scope) = self.scopes.get(self.selected_scope) else {
+            return;
+        };
+        let saved: Vec<_> = self.registry.camera_profiles_for_scope(scope).into_iter()
+            .filter(|profile| profile.role.marked_camera()).collect();
+        ui.separator();
+        ui.collapsing(
+            format!("Household camera inventory ({} user-marked)", saved.len()),
+            |ui| {
+                ui.label(RichText::new(
+                    "These camera identities and apps were entered by you, not inferred from network chipset vendors. Saved entries remain listed even when a scan does not observe the device. Camera images and local video access are still unverified."
+                ).color(MUTED).small());
+                if saved.is_empty() {
+                    ui.label("No camera identities saved yet. Select a device below and set its user camera role and app.");
+                }
+                for profile in saved {
+                    let discovered = self.devices.values()
+                        .find(|device| self.registry.camera_profile(scope, device)
+                            .is_some_and(|stored| stored.identity == profile.identity));
+                    let ip = discovered.map_or(profile.last_ip, |device| device.ip);
+                    let mut lookup = Device::new(ip);
+                    lookup.mac = profile.mac.clone();
+                    let label = self.registry.alias(&lookup).unwrap_or("Unnamed");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(label).strong());
+                        ui.label(format!("{} · {} · {}", ip, profile.role.label(), profile.app.label()));
+                        ui.label(
+                            RichText::new(if discovered.is_some() {
+                                "observed in current scan"
+                            } else {
+                                "not observed in current scan (not necessarily offline)"
+                            }).color(MUTED).small()
+                        );
+                    });
+                }
+            },
+        );
+    }
+
     fn devices_panel(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.heading("Discovered devices");
@@ -1365,6 +1405,51 @@ impl OculariumApp {
                 }
             }
         });
+        ui.group(|ui| {
+            ui.strong("User camera identity and app");
+            ui.label(RichText::new(
+                "Set these only from household knowledge. Ocularium will not infer ANRAN/VicoHome from MAC vendor, and a user-confirmed camera is not verified video access."
+            ).color(MUTED).small());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Camera role");
+                egui::ComboBox::from_id_salt("camera_role_selected")
+                    .selected_text(self.camera_role_edit.label())
+                    .show_ui(ui, |ui| {
+                        for role in [
+                            CameraRole::Unreviewed, CameraRole::Possible,
+                            CameraRole::UserConfirmed, CameraRole::NotCamera
+                        ] {
+                            ui.selectable_value(&mut self.camera_role_edit, role, role.label());
+                        }
+                    });
+                ui.label("Managed by");
+                egui::ComboBox::from_id_salt("camera_app_selected")
+                    .selected_text(self.camera_app_edit.label())
+                    .show_ui(ui, |ui| {
+                        for app in [
+                            CameraApp::Unknown, CameraApp::Anran, CameraApp::VicoHome,
+                            CameraApp::Other, CameraApp::NoApp
+                        ] {
+                            ui.selectable_value(&mut self.camera_app_edit, app, app.label());
+                        }
+                    });
+                if ui.button("Save camera identity").clicked() {
+                    if let Some(scope) = self.scopes.get(self.selected_scope) {
+                        match self.registry.set_camera_profile(
+                            scope, &device, self.camera_role_edit, self.camera_app_edit
+                        ) {
+                            Ok(()) => self.status = "Camera identity saved locally (user-reported)".into(),
+                            Err(error) => self.messages.push(format!("Camera identity not saved: {error}")),
+                        }
+                    }
+                }
+            });
+            if device.mac.is_none() {
+                ui.label(RichText::new(
+                    "No MAC available. This identity is bound to the IP on this LAN and may become stale if the DHCP address changes. It will not silently transfer to a different MAC."
+                ).color(MUTED).small());
+            }
+        });
         if let Some(scope) = self.scopes.get(self.selected_scope) {
             if let Some((lease, matched_by)) = self.dhcp.match_device(scope, &device) {
                 ui.group(|ui| {
@@ -1735,6 +1820,7 @@ impl eframe::App for OculariumApp {
                     ui.colored_label(Color32::from_rgb(242, 180, 91), message);
                 }
                 ui.add_space(12.0);
+                self.camera_inventory_panel(ui);
                 self.devices_panel(ui);
                 self.details_panel(ui);
                 self.neighbor_panel(ui);
