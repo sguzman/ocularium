@@ -148,7 +148,7 @@ pub fn parse_frame(data: &[u8]) -> Result<(MediaFrame<'_>, usize), FrameError> {
         return Err(FrameError::Invalid);
     }
     let kind = FrameKind::parse(data[3]).ok_or(FrameError::Invalid)?;
-    let (header_size, payload_len, timestamp_ms, sequence) = match kind {
+    let (header_size, payload_len, timestamp_ms, sequence): (usize, usize, Option<u32>, Option<u32>) = match kind {
         FrameKind::Keyframe => {
             if data.len() < 0x3c { return Err(FrameError::Incomplete); }
             (0x3c, le_u32(data, 0x38) as usize, Some(le_u32(data, 0x30)), Some(le_u32(data, 0x10)))
