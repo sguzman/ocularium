@@ -20,6 +20,7 @@ use crate::{
     history::{self, HistoryStore},
     neighbor_history::NeighborArchive,
     neighbor_watch::NeighborWatch,
+    onvif_capabilities::{self, CapabilityResult},
     registry::Registry,
     rtsp::{self, RtspInspection},
     snapshot::{self, SnapshotResult},
@@ -64,6 +65,9 @@ pub struct OculariumApp {
     rtsp_receiver: Option<Receiver<RtspInspection>>,
     inspecting: Option<(Ipv4Addr, u16)>,
     inspections: BTreeMap<(Ipv4Addr, u16), RtspInspection>,
+    onvif_receiver: Option<Receiver<CapabilityResult>>,
+    onvif_inspecting: Option<Ipv4Addr>,
+    onvif_results: BTreeMap<Ipv4Addr, CapabilityResult>,
     snapshot_receiver: Option<Receiver<SnapshotResult>>,
     snapshot_busy: Option<(Ipv4Addr, u16)>,
     snapshot_pending: Option<SnapshotResult>,
@@ -131,6 +135,9 @@ impl OculariumApp {
             rtsp_receiver: None,
             inspecting: None,
             inspections: BTreeMap::new(),
+            onvif_receiver: None,
+            onvif_inspecting: None,
+            onvif_results: BTreeMap::new(),
             snapshot_receiver: None,
             snapshot_busy: None,
             snapshot_pending: None,
@@ -154,6 +161,9 @@ impl OculariumApp {
         self.rtsp_receiver = None;
         self.inspecting = None;
         self.inspections.clear();
+        self.onvif_receiver = None;
+        self.onvif_inspecting = None;
+        self.onvif_results.clear();
         self.snapshot_receiver = None;
         self.snapshot_busy = None;
         self.snapshot_pending = None;
@@ -305,6 +315,19 @@ impl OculariumApp {
         if disconnected {
             self.receiver = None;
             self.cancelled = None;
+        }
+        if let Some(rx) = self.onvif_receiver.take() {
+            match rx.try_recv() {
+                Ok(result) => {
+                    self.onvif_inspecting = None;
+                    self.onvif_results.insert(result.ip, result);
+                }
+                Err(mpsc::TryRecvError::Empty) => self.onvif_receiver = Some(rx),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.onvif_inspecting = None;
+                    self.messages.push("ONVIF capability check stopped unexpectedly".into());
+                }
+            }
         }
         if let Some(rx) = self.snapshot_receiver.take() {
             match rx.try_recv() {
@@ -1564,6 +1587,7 @@ impl eframe::App for OculariumApp {
             || self.inspecting.is_some()
             || self.watch_running
             || self.snapshot_busy.is_some()
+            || self.onvif_inspecting.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
