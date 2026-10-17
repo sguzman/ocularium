@@ -95,7 +95,8 @@ impl OculariumApp {
         // Prefer the available LAN containing saved camera records on startup,
         // instead of defaulting to an unrelated container/bridge interface.
         // This selects an interface only; no network request is made.
-        let selected_scope = scopes.iter()
+        let selected_scope = scopes
+            .iter()
             .position(|scope| !registry.camera_profiles_for_scope(scope).is_empty())
             .unwrap_or(0);
         let (history, history_warning) = HistoryStore::load();
@@ -388,7 +389,8 @@ impl OculariumApp {
     fn refresh_interfaces(&mut self) {
         match discovery::interfaces() {
             Ok(scopes) => {
-                self.selected_scope = scopes.iter()
+                self.selected_scope = scopes
+                    .iter()
                     .position(|scope| !self.registry.camera_profiles_for_scope(scope).is_empty())
                     .unwrap_or(0);
                 self.scopes = scopes;
@@ -867,8 +869,12 @@ impl OculariumApp {
         };
         // All explicitly saved profiles are shown, including an Unreviewed
         // device with only a model. Do not require a fresh network scan.
-        let saved: Vec<_> = self.registry.camera_profiles_for_scope(scope)
-            .into_iter().cloned().collect();
+        let saved: Vec<_> = self
+            .registry
+            .camera_profiles_for_scope(scope)
+            .into_iter()
+            .cloned()
+            .collect();
         let camera_count = saved.iter().filter(|p| p.role.marked_camera()).count();
         ui.separator();
         egui::CollapsingHeader::new(format!(
@@ -931,8 +937,13 @@ impl OculariumApp {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
         };
-        let Some(profile) = self.registry.camera_profiles_for_scope(scope)
-            .into_iter().find(|p| p.identity == identity).cloned() else {
+        let Some(profile) = self
+            .registry
+            .camera_profiles_for_scope(scope)
+            .into_iter()
+            .find(|p| p.identity == identity)
+            .cloned()
+        else {
             self.selected_saved_camera = None;
             return;
         };
