@@ -6,6 +6,7 @@ mod dns;
 mod history;
 mod identify;
 mod identity;
+mod local_stream;
 mod mdns;
 mod neighbor_history;
 mod neighbor_watch;
