@@ -18,6 +18,12 @@ cargo run --release
 
 Ocularium is a native application; it needs **no server**, no cloud login, and no root privileges. It does need network access to your own LAN.
 
+## ONVIF capability investigation
+
+Select a discovered device and click **Inspect advertised ONVIF** if it supplied a WS-Discovery ONVIF URL. Ocularium checks only one same-host, plain-HTTP advertised endpoint; it never follows off-host URLs, redirects, or handles credentials. If the device did not advertise an ONVIF service, the UI instead offers **Check standard ONVIF service**, which sends one unauthenticated SOAP GetCapabilities request to the conventional `http://DEVICE_IP/onvif/device_service` endpoint on port 80. It does not sweep ports or attempt password guessing.
+
+Results distinguish no HTTP response, 401/403 authorization barriers, 404 missing endpoint, SOAP faults, and recognized ONVIF capability categories. If an ONVIF Media service URL is advertised, its hostname must match the selected device before the UI marks it as same-host. **Copy safe ONVIF diagnostic** and the discovery report contain status/capability evidence without raw service URLs or credentials. ONVIF advertising is not proof a stream is playable, and absence of an ONVIF reply is not proof of a cloud-only camera. This feature does not request stream URIs or decode video.
+
 ## Experimental single-frame RTSP capture
 
 Select an RTSP-capable discovered device and enter its **exact stream path** (no endpoint guessing). Click **Capture one frame :PORT**. If the local `ffmpeg` executable is installed, Ocularium runs it in a bounded worker to attempt CPU decoding of a single 640 × 360 RGB frame, shown as an in-memory egui texture. Capture is manually triggered, runs at most 12 seconds, and never records, uploads, saves, or includes image pixels in reports.
