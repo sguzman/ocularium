@@ -20,6 +20,7 @@ use crate::{
     history::{self, HistoryStore},
     neighbor_history::NeighborArchive,
     neighbor_watch::NeighborWatch,
+    local_stream::{self, FrameResult},
     onvif_capabilities::{self, CapabilityResult},
     registry::{CameraApp, CameraMetadata, CameraRole, Registry},
     rtsp::{self, RtspInspection},
@@ -78,6 +79,12 @@ pub struct OculariumApp {
     snapshot_pending: Option<SnapshotResult>,
     snapshot_texture: Option<(Ipv4Addr, u16, String, egui::TextureHandle)>,
     snapshot_error: Option<(Ipv4Addr, u16, String)>,
+    local_stream_url: String,
+    local_stream_receiver: Option<Receiver<FrameResult>>,
+    local_stream_busy: Option<String>,
+    local_stream_pending: Option<FrameResult>,
+    local_stream_texture: Option<(String, egui::TextureHandle)>,
+    local_stream_error: Option<(String, String)>,
 }
 
 impl OculariumApp {
@@ -160,6 +167,12 @@ impl OculariumApp {
             snapshot_pending: None,
             snapshot_texture: None,
             snapshot_error: None,
+            local_stream_url: String::new(),
+            local_stream_receiver: None,
+            local_stream_busy: None,
+            local_stream_pending: None,
+            local_stream_texture: None,
+            local_stream_error: None,
         }
     }
 
@@ -191,6 +204,12 @@ impl OculariumApp {
         self.snapshot_pending = None;
         self.snapshot_texture = None;
         self.snapshot_error = None;
+        self.local_stream_url.clear();
+        self.local_stream_receiver = None;
+        self.local_stream_busy = None;
+        self.local_stream_pending = None;
+        self.local_stream_texture = None;
+        self.local_stream_error = None;
         self.messages.clear();
         self.completed = 0;
         self.total = scope.hosts_total();
@@ -349,6 +368,19 @@ impl OculariumApp {
                     self.onvif_inspecting = None;
                     self.messages
                         .push("ONVIF capability check stopped unexpectedly".into());
+                }
+            }
+        }
+        if let Some(rx) = self.local_stream_receiver.take() {
+            match rx.try_recv() {
+                Ok(frame) => {
+                    self.local_stream_busy = None;
+                    self.local_stream_pending = Some(frame);
+                }
+                Err(mpsc::TryRecvError::Empty) => self.local_stream_receiver = Some(rx),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.local_stream_busy = None;
+                    self.messages.push("Local stream worker stopped unexpectedly".into());
                 }
             }
         }
@@ -853,6 +885,9 @@ impl OculariumApp {
         let device = profile.device_for_editing();
         self.selected_device = None;
         self.selected_saved_camera = Some(profile.identity.clone());
+        self.local_stream_url.clear();
+        self.local_stream_texture = None;
+        self.local_stream_error = None;
         self.alias_edit = self.registry.alias(&device).unwrap_or("").to_owned();
         self.camera_role_edit = profile.role;
         self.camera_app_edit = profile.app;
@@ -1998,6 +2033,25 @@ impl Drop for OculariumApp {
 impl eframe::App for OculariumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        if let Some(frame) = self.local_stream_pending.take() {
+            if let Some(pixels) = frame.frame {
+                let texture = ctx.load_texture(
+                    "ocularium-local-mpegts-frame",
+                    egui::ColorImage::from_rgb(
+                        [snapshot::WIDTH, snapshot::HEIGHT], &pixels
+                    ),
+                    egui::TextureOptions::LINEAR,
+                );
+                self.local_stream_texture = Some((frame.identity, texture));
+                self.local_stream_error = None;
+            } else {
+                self.local_stream_texture = None;
+                self.local_stream_error = Some((
+                    frame.identity,
+                    frame.error.unwrap_or_else(|| "No frame decoded".into())
+                ));
+            }
+        }
         if let Some(result) = self.snapshot_pending.take() {
             if let Some(pixels) = result.pixels {
                 let image =
@@ -2025,6 +2079,7 @@ impl eframe::App for OculariumApp {
             || self.watch_running
             || self.snapshot_busy.is_some()
             || self.onvif_inspecting.is_some()
+            || self.local_stream_busy.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
