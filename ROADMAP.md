@@ -22,6 +22,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Basic HTTP fingerprinting of selected local ports
 - [x] Automatic same-host SSDP XML / ONVIF GetDeviceInformation enrichment, without credentials
 - [x] Display advertised manufacturer, model, device type and firmware separately from MAC vendor
+- [x] User-triggered bounded ONVIF GetCapabilities on advertised same-host HTTP endpoint or one standard port-80 device-service path
+- [x] Surface 401/403/404, SOAP faults, and advertised same-host Media capability without assuming usable video access or cloud-only status
+- [x] Redacted ONVIF capability diagnostics in GUI and discovery report, with protocol mock tests
 - [ ] Authenticate authorized ONVIF responses when the user supplies credentials, without brute forcing
 - [ ] Better interface-aware multicast routing
 - [ ] Handle duplicate/multihomed device identities
