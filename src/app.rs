@@ -1323,6 +1323,10 @@ impl OculariumApp {
                         thread::spawn(move || {
                             let _ = tx.send(rtsp::inspect(ip, port, path, credentials));
                         });
+                        // Hide the previous result while this attempt is in
+                        // progress. Otherwise an old 401 looks like the result
+                        // of the newly supplied credentials.
+                        self.inspections.remove(&(ip, port));
                         self.rtsp_receiver = Some(rx);
                         self.inspecting = Some((ip, port));
                     }
@@ -1381,11 +1385,45 @@ impl OculariumApp {
                 ).color(MUTED).small());
             }
             if let Some(result) = self.inspections.get(&(device.ip, port)) {
+                if result.path != self.rtsp_path {
+                    ui.label(RichText::new(
+                        "Previous RTSP test used a different stream path. Run Test RTSP access again to evaluate this path."
+                    ).color(MUTED).small());
+                }
                 ui.label(result.summary());
+                ui.label(format!(
+                    "Initial DESCRIBE: {}",
+                    result.initial_describe_status
+                        .map_or_else(|| "no response".to_owned(), |status| status.to_string()),
+                ));
+                ui.label(format!(
+                    "Authenticated retry sent: {}",
+                    if result.retry_attempted { "yes" } else { "no" }
+                ));
+                if result.retry_attempted {
+                    ui.label(format!(
+                        "Authenticated retry response: {}",
+                        result.authenticated_retry_status
+                            .map_or_else(|| "no response".to_owned(), |status| status.to_string()),
+                    ));
+                }
+                if let Some(details) = &result.challenge_summary {
+                    ui.label(format!("Challenge (redacted): {details}"));
+                }
+                ui.label(format!("Authentication assessment: {}", result.auth_diagnostic));
+                if ui.button("Copy safe RTSP diagnostic").on_hover_text(
+                    "Copies status codes and compatibility flags only. Does not include login credentials, stream path, Digest realm, nonce, or Authorization header."
+                ).clicked() {
+                    ui.ctx().copy_text(result.safe_diagnostic());
+                }
                 if result.describe_status == Some(401) {
                     ui.label(
                         RichText::new(
-                            "Access restricted: this endpoint requires authentication. A correct login may still need a device-specific stream path.",
+                            if result.retry_attempted {
+                                "Server rejected the authenticated request. This does not establish whether the password, RTSP permissions, stream path, or Digest handling is responsible."
+                            } else {
+                                "The server requested authentication, but no authenticated response was sent. See the assessment above."
+                            }
                         ).color(Color32::from_rgb(239, 190, 100)),
                     );
                 } else if result.sdp_received {
