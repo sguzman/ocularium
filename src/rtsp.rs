@@ -272,6 +272,34 @@ fn md5_hex(value: &str) -> String {
     format!("{:x}", md5::compute(value.as_bytes()))
 }
 
+/// Standard RFC 2069/2617 Digest response calculation, kept separate
+/// from header serialization so MD5, MD5-sess and qop variants can be
+/// checked against independent published and fixed known-answer vectors.
+fn digest_response(
+    username: &str,
+    password: &str,
+    realm: &str,
+    nonce: &str,
+    method: &str,
+    uri: &str,
+    algorithm: &str,
+    qop_auth: bool,
+    cnonce: &str,
+) -> String {
+    let initial_ha1 = md5_hex(&format!("{username}:{realm}:{password}"));
+    let ha1 = if algorithm.eq_ignore_ascii_case("MD5-sess") {
+        md5_hex(&format!("{initial_ha1}:{nonce}:{cnonce}"))
+    } else {
+        initial_ha1
+    };
+    let ha2 = md5_hex(&format!("{method}:{uri}"));
+    if qop_auth {
+        md5_hex(&format!("{ha1}:{nonce}:00000001:{cnonce}:auth:{ha2}"))
+    } else {
+        md5_hex(&format!("{ha1}:{nonce}:{ha2}"))
+    }
+}
+
 fn digest_authorization(
     challenge: &str,
     credentials: &Credentials,
@@ -303,21 +331,17 @@ fn digest_authorization(
         return Err("Server requires an unsupported Digest qop".into());
     }
     let cnonce = uuid::Uuid::new_v4().simple().to_string();
-    let ha1_initial = md5_hex(&format!(
-        "{}:{realm}:{}",
-        credentials.username, credentials.password
-    ));
-    let ha1 = if algorithm.eq_ignore_ascii_case("MD5-sess") {
-        md5_hex(&format!("{ha1_initial}:{nonce}:{cnonce}"))
-    } else {
-        ha1_initial
-    };
-    let ha2 = md5_hex(&format!("{method}:{uri}"));
-    let response = if qop.is_some() {
-        md5_hex(&format!("{ha1}:{nonce}:00000001:{cnonce}:auth:{ha2}"))
-    } else {
-        md5_hex(&format!("{ha1}:{nonce}:{ha2}"))
-    };
+    let response = digest_response(
+        &credentials.username,
+        &credentials.password,
+        realm,
+        nonce,
+        method,
+        uri,
+        algorithm,
+        qop.is_some(),
+        &cnonce,
+    );
     let mut value = format!(
         "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", response=\"{response}\"",
         escape_quoted(&credentials.username),
@@ -606,6 +630,38 @@ mod tests {
             "v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n";
         assert_eq!(codecs(body), ["H264", "H265"]);
     }
+    #[test]
+    fn digest_no_qop_matches_independent_md5_known_answer() {
+        // Fixed external fixture. This is the exact variant advertised by
+        // the household YGTek: MD5 with no qop.
+        let response = digest_response(
+            "alice", "mypassword", "camera", "1234abcd", "DESCRIBE",
+            "rtsp://192.168.0.100:8554/profile0", "MD5", false, "unused"
+        );
+        assert_eq!(response, "2ece67e13ce3ee6f592f02f8346422cd");
+    }
+
+    #[test]
+    fn digest_with_qop_matches_rfc2617_mufasa_vector() {
+        // RFC 2617 section 3.5: response for qop=auth, nc=00000001.
+        let response = digest_response(
+            "Mufasa", "Circle Of Life", "testrealm@host.com",
+            "dcd98b7102dd2f0e8b11d0f600bfb0c093", "GET",
+            "/dir/index.html", "MD5", true, "0a4f113b"
+        );
+        assert_eq!(response, "6629fae49393a05397450978507c4ef1");
+    }
+
+    #[test]
+    fn md5_sess_without_qop_matches_fixed_known_answer() {
+        let response = digest_response(
+            "alice", "mypassword", "camera", "1234abcd", "DESCRIBE",
+            "rtsp://192.168.0.100:8554/profile0", "MD5-sess", false,
+            "fixed-test-cnonce"
+        );
+        assert_eq!(response, "dd2115c0828d8ff26ba4c621bbba564b");
+    }
+
     #[test]
     fn challenge_summary_does_not_disclose_realm_or_nonce() {
         let challenge = "Digest realm=\"private-location\", nonce=\"sensitive-nonce\", algorithm=MD5-sess, qop=\"auth,auth-int\", stale=true";
