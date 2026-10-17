@@ -56,6 +56,34 @@ impl CameraApp {
     }
 }
 
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CameraMetadata {
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub firmware: String,
+    #[serde(default)]
+    pub platform: String,
+    /// Private, user-entered device identifier. Excluded from copied reports.
+    #[serde(default)]
+    pub serial: String,
+}
+
+impl CameraMetadata {
+    pub fn cleaned(&self) -> Self {
+        fn clean(input: &str, max: usize) -> String {
+            input.trim().chars().filter(|ch| !ch.is_control()).take(max).collect()
+        }
+        Self {
+            model: clean(&self.model, 80),
+            firmware: clean(&self.firmware, 80),
+            platform: clean(&self.platform, 80),
+            serial: clean(&self.serial, 120),
+        }
+    }
+}
+
 /// User assertions only. A saved profile never proves online status, physical
 /// identity, ONVIF support, camera credentials, or a playable video stream.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +94,8 @@ pub struct CameraProfile {
     pub mac: Option<String>,
     pub role: CameraRole,
     pub app: CameraApp,
+    #[serde(default)]
+    pub metadata: CameraMetadata,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -141,10 +171,13 @@ impl Registry {
         device: &Device,
         role: CameraRole,
         app: CameraApp,
+        metadata: &CameraMetadata,
     ) -> io::Result<()> {
         let id = camera_key(scope, device);
         let mut next = self.clone();
-        if role == CameraRole::Unreviewed && app == CameraApp::Unknown {
+        let metadata = metadata.cleaned();
+        if role == CameraRole::Unreviewed && app == CameraApp::Unknown
+            && metadata == CameraMetadata::default() {
             next.camera_profiles.remove(&id);
         } else {
             next.camera_profiles.insert(
@@ -156,6 +189,7 @@ impl Registry {
                     mac: device.mac.as_ref().map(|s| s.to_ascii_lowercase()),
                     role,
                     app,
+                    metadata,
                 },
             );
         }
@@ -174,6 +208,20 @@ impl Registry {
         let bytes = serde_json::to_vec_pretty(self).map_err(io::Error::other)?;
         // Write into the same directory, then rename for an atomic update.
         let tmp = path.with_extension("json.tmp");
+        // Camera serials are private local data; never leave registry writes
+        // under the process umask's potentially world-readable default.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = fs::OpenOptions::new()
+                .write(true).create(true).truncate(true).mode(0o600)
+                .open(&tmp)?;
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            use std::io::Write as _;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+        #[cfg(not(unix))]
         fs::write(&tmp, bytes)?;
         fs::rename(tmp, path)
     }
@@ -242,6 +290,7 @@ mod tests {
                 mac: first.mac.clone(),
                 role: CameraRole::UserConfirmed,
                 app: CameraApp::Anran,
+                metadata: CameraMetadata::default(),
             },
         );
         let mut moved = Device::new(Ipv4Addr::new(192, 168, 0, 199));
@@ -272,6 +321,30 @@ mod tests {
         let loaded: Registry = serde_json::from_str(&json).unwrap();
         assert!(loaded.camera_profiles.is_empty());
         assert_eq!(registry.aliases, loaded.aliases);
+    }
+
+    #[test]
+    fn old_camera_profiles_load_without_metadata() {
+        let old = r#"{"aliases":{},"camera_profiles":{"net|mac:aa:bb:cc:dd:ee:ff":{"scope":"net","identity":"net|mac:aa:bb:cc:dd:ee:ff","last_ip":"192.168.0.103","mac":"aa:bb:cc:dd:ee:ff","role":"user_confirmed","app":"vico_home"}}}"#;
+        let registry: Registry = serde_json::from_str(old).unwrap();
+        let profile = registry.camera_profiles.values().next().unwrap();
+        assert_eq!(profile.metadata, CameraMetadata::default());
+    }
+
+    #[test]
+    fn metadata_is_bounded_and_survives_json_round_trip() {
+        let metadata = CameraMetadata {
+            model: " CQ1F ".into(),
+            firmware: "1.14.10".into(),
+            platform: "device-v1".into(),
+            serial: "example-private-serial".into(),
+        };
+        assert_eq!(metadata.cleaned().model, "CQ1F");
+        assert_eq!(CameraMetadata { serial: "x".repeat(130), ..Default::default() }
+            .cleaned().serial.len(), 120);
+        let encoded = serde_json::to_string(&metadata).unwrap();
+        let decoded: CameraMetadata = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, metadata);
     }
     #[test]
     fn uses_stable_mac_when_available() {
