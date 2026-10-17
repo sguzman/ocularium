@@ -965,6 +965,58 @@ impl OculariumApp {
         });
     }
 
+    fn local_stream_panel(&mut self, ui: &mut egui::Ui, identity: &str) {
+        ui.separator();
+        ui.collapsing("Experimental local stream frame (MPEG-TS)", |ui| {
+            ui.label(RichText::new(
+                "For an explicitly authorized local HTTP MPEG-TS stream (for example, a future ANRAN adapter). No app login, camera password, P2P bypass, cloud access, or source scanning. VicoHome has no official live-stream integration."
+            ).color(MUTED).small());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Local stream URL");
+                ui.add(egui::TextEdit::singleline(&mut self.local_stream_url)
+                    .desired_width(370.0)
+                    .hint_text("http://127.0.0.1:8080/stream"));
+            });
+            ui.label(RichText::new(
+                "Only http://private-IPv4:port/path; no tokens, passwords, redirects, or hostname lookups. URL is held only in memory, not stored or exported. ffmpeg receives video bytes through stdin, not this URL."
+            ).color(MUTED).small());
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(
+                    self.local_stream_busy.is_none() && !self.local_stream_url.trim().is_empty(),
+                    egui::Button::new("Capture frame from local stream")
+                ).clicked() {
+                    let (tx, rx) = mpsc::channel();
+                    let identity = identity.to_owned();
+                    let url = self.local_stream_url.trim().to_owned();
+                    self.local_stream_busy = Some(identity.clone());
+                    self.local_stream_receiver = Some(rx);
+                    self.local_stream_texture = None;
+                    self.local_stream_error = None;
+                    thread::spawn(move || {
+                        let _ = tx.send(local_stream::capture(identity, url));
+                    });
+                }
+                if self.local_stream_busy.as_deref() == Some(identity) {
+                    ui.spinner();
+                    ui.label("Decoding one frame (12-second decoder limit)");
+                }
+            });
+            if let Some((stored_identity, texture)) = &self.local_stream_texture {
+                if stored_identity == identity {
+                    ui.label(RichText::new(
+                        "Frame received from an explicit local source. This does not prove direct access to the camera or continuous playback."
+                    ).color(HIGHLIGHT).small());
+                    ui.add(egui::Image::new(texture).max_width(640.0));
+                }
+            }
+            if let Some((stored_identity, error)) = &self.local_stream_error {
+                if stored_identity == identity {
+                    ui.colored_label(Color32::from_rgb(239, 190, 100), error);
+                }
+            }
+        });
+    }
+
     fn saved_camera_editor(&mut self, ui: &mut egui::Ui) {
         let Some(identity) = self.selected_saved_camera.clone() else {
             return;
@@ -1006,6 +1058,7 @@ impl OculariumApp {
                 }
             });
             self.camera_identity_editor(ui, &device, true);
+            self.local_stream_panel(ui, &profile.identity);
         });
     }
 
