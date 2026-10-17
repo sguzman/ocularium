@@ -34,6 +34,7 @@ pub struct OculariumApp {
     selected_scope: usize,
     devices: BTreeMap<Ipv4Addr, Device>,
     selected_device: Option<Ipv4Addr>,
+    selected_saved_camera: Option<String>,
     receiver: Option<Receiver<Event>>,
     cancelled: Option<Arc<AtomicBool>>,
     scanning: bool,
@@ -108,6 +109,7 @@ impl OculariumApp {
             selected_scope: 0,
             devices: BTreeMap::new(),
             selected_device: None,
+            selected_saved_camera: None,
             receiver: None,
             cancelled: None,
             scanning: false,
@@ -161,6 +163,7 @@ impl OculariumApp {
         };
         self.devices.clear();
         self.selected_device = None;
+        self.selected_saved_camera = None;
         self.alias_edit.clear();
         self.camera_role_edit = CameraRole::default();
         self.camera_app_edit = CameraApp::default();
@@ -381,6 +384,7 @@ impl OculariumApp {
             Ok(scopes) => {
                 self.scopes = scopes;
                 self.selected_scope = 0;
+                self.selected_saved_camera = None;
             }
             Err(err) => self.messages.push(format!("Network interfaces: {err}")),
         }
@@ -835,67 +839,120 @@ impl OculariumApp {
         });
     }
 
-    fn camera_inventory_panel(&self, ui: &mut egui::Ui) {
+    fn select_saved_camera(&mut self, profile: &crate::registry::CameraProfile) {
+        let device = profile.device_for_editing();
+        self.selected_device = None;
+        self.selected_saved_camera = Some(profile.identity.clone());
+        self.alias_edit = self.registry.alias(&device).unwrap_or("").to_owned();
+        self.camera_role_edit = profile.role;
+        self.camera_app_edit = profile.app;
+        self.camera_metadata_edit = profile.metadata.clone();
+        self.show_camera_serial = false;
+        // A saved IP is only historical identity, never a live probe target.
+        self.rtsp_username.clear();
+        self.rtsp_password.clear();
+    }
+
+    fn camera_inventory_panel(&mut self, ui: &mut egui::Ui) {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
         };
-        let saved: Vec<_> = self
-            .registry
-            .camera_profiles_for_scope(scope)
-            .into_iter()
-            .filter(|profile| profile.role.marked_camera())
-            .collect();
+        // All explicitly saved profiles are shown, including an Unreviewed
+        // device with only a model. Do not require a fresh network scan.
+        let saved: Vec<_> = self.registry.camera_profiles_for_scope(scope)
+            .into_iter().cloned().collect();
+        let camera_count = saved.iter().filter(|p| p.role.marked_camera()).count();
         ui.separator();
-        ui.collapsing(
-            format!("Household camera inventory ({} user-marked)", saved.len()),
-            |ui| {
-                ui.label(RichText::new(
-                    "These camera identities and apps were entered by you, not inferred from network chipset vendors. Saved entries remain listed even when a scan does not observe the device. Camera images and local video access are still unverified."
-                ).color(MUTED).small());
-                if saved.is_empty() {
-                    ui.label("No camera identities saved yet. Select a device below and set its user camera role and app.");
+        egui::CollapsingHeader::new(format!(
+            "Saved camera records ({} total, {} marked as cameras)",
+            saved.len(), camera_count
+        )).default_open(true).show(ui, |ui| {
+            ui.label(RichText::new(
+                "These are saved user entries, not a live device list. Use Edit saved without scanning. An absent device is not necessarily offline."
+            ).color(MUTED).small());
+            if saved.is_empty() {
+                ui.label("No saved camera records yet. Select a discovered device and save its camera identity or model.");
+            }
+            for profile in saved {
+                let discovered = self.devices.values()
+                    .find(|device| self.scopes.get(self.selected_scope)
+                        .and_then(|scope| self.registry.camera_profile(scope, device))
+                        .is_some_and(|stored| stored.identity == profile.identity))
+                    .cloned();
+                let ip = discovered.as_ref().map_or(profile.last_ip, |device| device.ip);
+                let mut lookup = profile.device_for_editing();
+                lookup.ip = ip;
+                let label = self.registry.alias(&lookup).unwrap_or("Unnamed").to_owned();
+                let local_access = discovered.as_ref().map_or(
+                    "not checked in this session",
+                    |device| self.local_video_evidence(device)
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Edit saved").clicked() {
+                        self.select_saved_camera(&profile);
+                    }
+                    ui.label(RichText::new(label).strong());
+                    ui.label(format!("{} · {} · {}", ip, profile.role.label(), profile.app.label()));
+                    if !profile.metadata.model.is_empty() {
+                        ui.label(format!("Model: {}", profile.metadata.model));
+                    }
+                    if !profile.metadata.firmware.is_empty() {
+                        ui.label(format!("Firmware: {}", profile.metadata.firmware));
+                    }
+                    if !profile.metadata.platform.is_empty() {
+                        ui.label(format!("Platform: {}", profile.metadata.platform));
+                    }
+                    if !profile.metadata.serial.is_empty() {
+                        ui.label(RichText::new("Device ID saved (hidden)").color(MUTED).small());
+                    }
+                    ui.label(format!("Local access: {local_access}"));
+                    ui.label(RichText::new(if discovered.is_some() {
+                        "observed in current scan"
+                    } else {
+                        "historical record (not observed in current scan)"
+                    }).color(MUTED).small());
+                });
+            }
+        });
+    }
+
+    fn saved_camera_editor(&mut self, ui: &mut egui::Ui) {
+        let Some(identity) = self.selected_saved_camera.clone() else {
+            return;
+        };
+        let Some(scope) = self.scopes.get(self.selected_scope) else {
+            return;
+        };
+        let Some(profile) = self.registry.camera_profiles_for_scope(scope)
+            .into_iter().find(|p| p.identity == identity).cloned() else {
+            self.selected_saved_camera = None;
+            return;
+        };
+        let device = profile.device_for_editing();
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Edit saved camera");
+                if ui.button("Close editor").clicked() {
+                    self.selected_saved_camera = None;
                 }
-                for profile in saved {
-                    let discovered = self.devices.values()
-                        .find(|device| self.registry.camera_profile(scope, device)
-                            .is_some_and(|stored| stored.identity == profile.identity));
-                    let ip = discovered.map_or(profile.last_ip, |device| device.ip);
-                    let mut lookup = Device::new(ip);
-                    lookup.mac = profile.mac.clone();
-                    let label = self.registry.alias(&lookup).unwrap_or("Unnamed");
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new(label).strong());
-                        ui.label(format!("{} · {} · {}", ip, profile.role.label(), profile.app.label()));
-                        if !profile.metadata.model.is_empty() {
-                            ui.label(format!("Model: {}", profile.metadata.model));
-                        }
-                        if !profile.metadata.firmware.is_empty() {
-                            ui.label(format!("Firmware: {}", profile.metadata.firmware));
-                        }
-                        if !profile.metadata.platform.is_empty() {
-                            ui.label(format!("Platform: {}", profile.metadata.platform));
-                        }
-                        if !profile.metadata.serial.is_empty() {
-                            ui.label(RichText::new("Device ID saved (hidden)").color(MUTED).small());
-                        }
-                        ui.label(format!(
-                            "Local access: {}",
-                            discovered.map_or(
-                                "not checked in this session",
-                                |device| self.local_video_evidence(device)
-                            )
-                        ));
-                        ui.label(
-                            RichText::new(if discovered.is_some() {
-                                "observed in current scan"
-                            } else {
-                                "not observed in current scan (not necessarily offline)"
-                            }).color(MUTED).small()
-                        );
-                    });
+            });
+            ui.label(RichText::new(format!(
+                "Saved record for {}. This IP is historical; no scan or network connection is required for editing.",
+                profile.last_ip
+            )).color(MUTED).small());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Local label");
+                ui.add(egui::TextEdit::singleline(&mut self.alias_edit)
+                    .hint_text("e.g. Driveway or Street"));
+                if ui.button("Save label").clicked() {
+                    match self.registry.set_alias(&device, &self.alias_edit) {
+                        Ok(()) => self.status = "Saved camera label updated locally".into(),
+                        Err(error) => self.messages.push(format!("Could not save label: {error}")),
+                    }
                 }
-            },
-        );
+            });
+            self.camera_identity_editor(ui, &device, true);
+        });
     }
 
     fn devices_panel(&mut self, ui: &mut egui::Ui) {
@@ -1036,6 +1093,7 @@ impl OculariumApp {
                                 .clicked()
                             {
                                 self.selected_device = Some(d.ip);
+                                self.selected_saved_camera = None;
                                 self.alias_edit = self.registry.alias(d).unwrap_or("").to_owned();
                                 let profile = self.scopes.get(self.selected_scope)
                                     .and_then(|scope| self.registry.camera_profile(scope, d));
@@ -1450,6 +1508,85 @@ impl OculariumApp {
         }
     }
 
+    fn camera_identity_editor(&mut self, ui: &mut egui::Ui, device: &Device, saved_only: bool) {
+        ui.group(|ui| {
+            ui.strong("User camera identity and app");
+            ui.label(RichText::new(
+                "Household-provided identity only. Managing app, model and serial are not proof of a playable local video stream."
+            ).color(MUTED).small());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Camera role");
+                egui::ComboBox::from_id_salt("camera_role_selected")
+                    .selected_text(self.camera_role_edit.label())
+                    .show_ui(ui, |ui| {
+                        for role in [
+                            CameraRole::Unreviewed, CameraRole::Possible,
+                            CameraRole::UserConfirmed, CameraRole::NotCamera
+                        ] {
+                            ui.selectable_value(&mut self.camera_role_edit, role, role.label());
+                        }
+                    });
+                ui.label("Managed by");
+                egui::ComboBox::from_id_salt("camera_app_selected")
+                    .selected_text(self.camera_app_edit.label())
+                    .show_ui(ui, |ui| {
+                        for app in [
+                            CameraApp::Unknown, CameraApp::Anran, CameraApp::VicoHome,
+                            CameraApp::Other, CameraApp::NoApp
+                        ] {
+                            ui.selectable_value(&mut self.camera_app_edit, app, app.label());
+                        }
+                    });
+            });
+            ui.collapsing("Camera hardware details (optional, local only)", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Model");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.model)
+                        .desired_width(150.0).hint_text("e.g. CQ1F"));
+                    ui.label("Firmware");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.firmware)
+                        .desired_width(150.0));
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Platform / MCU");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.platform)
+                        .desired_width(180.0));
+                    ui.label("Serial / device ID");
+                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.serial)
+                        .password(!self.show_camera_serial).desired_width(180.0));
+                    if ui.small_button(if self.show_camera_serial { "Hide" } else { "Show" })
+                        .clicked() {
+                        self.show_camera_serial = !self.show_camera_serial;
+                    }
+                });
+                ui.label(RichText::new(
+                    "Device identifiers are saved only in the local user-private registry; serials are masked by default and excluded from Copy report."
+                ).color(MUTED).small());
+            });
+            if ui.button("Save camera identity").clicked() {
+                if let Some(scope) = self.scopes.get(self.selected_scope) {
+                    match self.registry.set_camera_profile(
+                        scope, device, self.camera_role_edit, self.camera_app_edit,
+                        &self.camera_metadata_edit,
+                    ) {
+                        Ok(()) => self.status = "Camera identity and hardware details saved locally".into(),
+                        Err(error) => self.messages.push(format!("Camera identity not saved: {error}")),
+                    }
+                }
+            }
+            ui.label(format!("Local video: {}", if saved_only {
+                "not checked (saved record, no network requests)"
+            } else {
+                self.local_video_evidence(device)
+            }));
+            if device.mac.is_none() {
+                ui.label(RichText::new(
+                    "No MAC available. This identity uses the LAN IP and will not silently transfer to a newly discovered MAC."
+                ).color(MUTED).small());
+            }
+        });
+    }
+
     fn details_panel(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Device details");
@@ -1519,78 +1656,7 @@ impl OculariumApp {
                 }
             }
         });
-        ui.group(|ui| {
-            ui.strong("User camera identity and app");
-            ui.label(RichText::new(
-                "Household-provided identity only. Managing app, model and serial are not proof of a playable local video stream."
-            ).color(MUTED).small());
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Camera role");
-                egui::ComboBox::from_id_salt("camera_role_selected")
-                    .selected_text(self.camera_role_edit.label())
-                    .show_ui(ui, |ui| {
-                        for role in [
-                            CameraRole::Unreviewed, CameraRole::Possible,
-                            CameraRole::UserConfirmed, CameraRole::NotCamera
-                        ] {
-                            ui.selectable_value(&mut self.camera_role_edit, role, role.label());
-                        }
-                    });
-                ui.label("Managed by");
-                egui::ComboBox::from_id_salt("camera_app_selected")
-                    .selected_text(self.camera_app_edit.label())
-                    .show_ui(ui, |ui| {
-                        for app in [
-                            CameraApp::Unknown, CameraApp::Anran, CameraApp::VicoHome,
-                            CameraApp::Other, CameraApp::NoApp
-                        ] {
-                            ui.selectable_value(&mut self.camera_app_edit, app, app.label());
-                        }
-                    });
-            });
-            ui.collapsing("Camera hardware details (optional, local only)", |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Model");
-                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.model)
-                        .desired_width(150.0).hint_text("e.g. CQ1F"));
-                    ui.label("Firmware");
-                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.firmware)
-                        .desired_width(150.0));
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Platform / MCU");
-                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.platform)
-                        .desired_width(180.0));
-                    ui.label("Serial / device ID");
-                    ui.add(egui::TextEdit::singleline(&mut self.camera_metadata_edit.serial)
-                        .password(!self.show_camera_serial).desired_width(180.0));
-                    if ui.small_button(if self.show_camera_serial { "Hide" } else { "Show" })
-                        .clicked() {
-                        self.show_camera_serial = !self.show_camera_serial;
-                    }
-                });
-                ui.label(RichText::new(
-                    "Device identifiers are saved only in the local user-private registry; serials are masked by default and excluded from Copy report."
-                ).color(MUTED).small());
-            });
-            if ui.button("Save camera identity").clicked() {
-                if let Some(scope) = self.scopes.get(self.selected_scope) {
-                    match self.registry.set_camera_profile(
-                        scope, &device, self.camera_role_edit, self.camera_app_edit,
-                        &self.camera_metadata_edit,
-                    ) {
-                        Ok(()) => self.status = "Camera identity and hardware details saved locally".into(),
-                        Err(error) => self.messages.push(format!("Camera identity not saved: {error}")),
-                    }
-                }
-            }
-            ui.label(format!("Local video: {}", self.local_video_evidence(&device)));
-            if device.mac.is_none() {
-                ui.label(RichText::new(
-                    "No MAC available. This identity uses the LAN IP and will not silently transfer to a newly discovered MAC."
-                ).color(MUTED).small());
-            }
-        });
+        self.camera_identity_editor(ui, &device, false);
         if let Some(scope) = self.scopes.get(self.selected_scope) {
             if let Some((lease, matched_by)) = self.dhcp.match_device(scope, &device) {
                 ui.group(|ui| {
@@ -1962,6 +2028,7 @@ impl eframe::App for OculariumApp {
                 }
                 ui.add_space(12.0);
                 self.camera_inventory_panel(ui);
+                self.saved_camera_editor(ui);
                 self.devices_panel(ui);
                 self.details_panel(ui);
                 self.neighbor_panel(ui);
