@@ -7,8 +7,8 @@ mod history;
 mod identify;
 mod identity;
 mod mdns;
-mod neighbor_watch;
 mod neighbor_history;
+mod neighbor_watch;
 mod registry;
 mod rtsp;
 

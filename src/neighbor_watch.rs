@@ -208,7 +208,11 @@ impl NeighborWatch {
     fn push_change(&mut self, at: u64, detail: String) {
         let sequence = self.next_sequence;
         self.next_sequence = self.next_sequence.saturating_add(1);
-        self.changes.push(Change { at, sequence, detail });
+        self.changes.push(Change {
+            at,
+            sequence,
+            detail,
+        });
         if self.changes.len() > MAX_EVENTS {
             self.changes.drain(..self.changes.len() - MAX_EVENTS);
         }
@@ -237,15 +241,16 @@ impl NeighborWatch {
             );
         }
         for neighbor in sample.neighbors {
-            let mac_record = self.by_mac.entry(neighbor.mac.clone()).or_insert_with(|| {
-                MacSighting {
-                    mac: neighbor.mac.clone(),
-                    first_seen: sample.taken_at,
-                    last_seen: sample.taken_at,
-                    samples: 0,
-                    ips: Vec::new(),
-                }
-            });
+            let mac_record =
+                self.by_mac
+                    .entry(neighbor.mac.clone())
+                    .or_insert_with(|| MacSighting {
+                        mac: neighbor.mac.clone(),
+                        first_seen: sample.taken_at,
+                        last_seen: sample.taken_at,
+                        samples: 0,
+                        ips: Vec::new(),
+                    });
             mac_record.last_seen = sample.taken_at;
             mac_record.samples = mac_record.samples.saturating_add(1);
             if !mac_record.ips.contains(&neighbor.ip) {

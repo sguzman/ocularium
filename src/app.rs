@@ -18,8 +18,8 @@ use crate::{
     discovery::{self, DeepReport, Device, Event, Scope},
     dns,
     history::{self, HistoryStore},
-    neighbor_watch::NeighborWatch,
     neighbor_history::NeighborArchive,
+    neighbor_watch::NeighborWatch,
     registry::Registry,
     rtsp::{self, RtspInspection},
 };
@@ -193,10 +193,12 @@ impl OculariumApp {
             return;
         }
         match self.neighbor_archive.record(watch) {
-            Ok(()) => self.neighbor_archive_status = Some(format!(
-                "Saved {} MAC identities from this observation session",
-                watch.by_mac.len(),
-            )),
+            Ok(()) => {
+                self.neighbor_archive_status = Some(format!(
+                    "Saved {} MAC identities from this observation session",
+                    watch.by_mac.len(),
+                ))
+            }
             Err(error) => self.neighbor_archive_status = Some(error),
         }
         self.last_neighbor_flush = Some(Instant::now());
@@ -206,9 +208,15 @@ impl OculariumApp {
         if let Some(watch) = &mut self.watch {
             watch.poll();
         }
-        if self.watch_running && self.remember_neighbors
-            && self.watch.as_ref().is_some_and(|watch| watch.sample_count > 0)
-            && self.last_neighbor_flush.is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+        if self.watch_running
+            && self.remember_neighbors
+            && self
+                .watch
+                .as_ref()
+                .is_some_and(|watch| watch.sample_count > 0)
+            && self
+                .last_neighbor_flush
+                .is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
         {
             self.persist_neighbor_observations();
         }
