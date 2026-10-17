@@ -1331,6 +1331,53 @@ impl OculariumApp {
                     ui.label("Testing RTSP access (one optional Digest attempt)");
                 }
             });
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        self.snapshot_busy.is_none(),
+                        egui::Button::new(format!("Capture one frame :{port}")),
+                    )
+                    .on_hover_text(
+                        "Optional CPU-only ffmpeg preview of the supplied RTSP path. No passwords, recording, or guessed paths.",
+                    )
+                    .clicked()
+                {
+                    let (tx, rx) = mpsc::channel();
+                    let ip = device.ip;
+                    let path = self.rtsp_path.clone();
+                    self.snapshot_busy = Some((ip, port));
+                    self.snapshot_receiver = Some(rx);
+                    self.snapshot_texture = None;
+                    self.snapshot_error = None;
+                    thread::spawn(move || {
+                        let _ = tx.send(snapshot::capture(ip, port, path));
+                    });
+                }
+                if self.snapshot_busy == Some((device.ip, port)) {
+                    ui.spinner();
+                    ui.label("Attempting one CPU-decoded frame (12s maximum)");
+                }
+            });
+            if let Some((ip, captured_port, path, texture)) = &self.snapshot_texture {
+                if *ip == device.ip && *captured_port == port && *path == self.rtsp_path {
+                    ui.label(RichText::new(
+                        "Decoded RTSP frame (memory only; no recording)"
+                    ).color(HIGHLIGHT));
+                    ui.add(egui::Image::new(texture).max_width(640.0));
+                }
+            }
+            if let Some((ip, captured_port, error)) = &self.snapshot_error {
+                if (*ip == device.ip && *captured_port == port)
+                    || (*ip == Ipv4Addr::UNSPECIFIED && *captured_port == 0)
+                {
+                    ui.colored_label(Color32::from_rgb(239, 190, 100), error);
+                }
+            }
+            if !self.rtsp_username.is_empty() {
+                ui.label(RichText::new(
+                    "Snapshot capture does not use the RTSP username or password. Authenticated snapshots require a secure in-process decoder, not command-line credentials."
+                ).color(MUTED).small());
+            }
             if let Some(result) = self.inspections.get(&(device.ip, port)) {
                 ui.label(result.summary());
                 if result.describe_status == Some(401) {
@@ -1341,7 +1388,7 @@ impl OculariumApp {
                     );
                 } else if result.sdp_received {
                     ui.label(
-                        RichText::new("Stream description received. Decoding and live video are not implemented yet.")
+                        RichText::new("Stream description received. Try Capture one frame to test decoding; continuous playback is not implemented.")
                             .color(HIGHLIGHT),
                     );
                 }
