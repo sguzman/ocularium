@@ -1292,9 +1292,17 @@ impl OculariumApp {
                         .password(!self.show_rtsp_username)
                         .desired_width(150.0),
                 );
-                if ui.small_button(
-                    if self.show_rtsp_username { "Hide" } else { "Show" }
-                ).on_hover_text("Username is hidden by default to avoid exposing it in screenshots.").clicked() {
+                if ui
+                    .small_button(if self.show_rtsp_username {
+                        "Hide"
+                    } else {
+                        "Show"
+                    })
+                    .on_hover_text(
+                        "Username is hidden by default to avoid exposing it in screenshots.",
+                    )
+                    .clicked()
+                {
                     self.show_rtsp_username = !self.show_rtsp_username;
                 }
                 ui.label("Password");

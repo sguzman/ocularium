@@ -202,7 +202,15 @@ fn request(
     authorization: Option<&str>,
 ) -> Result<Response, String> {
     let mut stream = connect(ip, port)?;
-    request_on_stream(&mut stream, SocketAddrV4::new(ip, port), path, method, seq, authorization, None)
+    request_on_stream(
+        &mut stream,
+        SocketAddrV4::new(ip, port),
+        path,
+        method,
+        seq,
+        authorization,
+        None,
+    )
 }
 
 // Parse a Digest challenge, respecting commas inside quoted qop lists.
@@ -288,7 +296,15 @@ struct DigestMaterial<'a> {
 
 fn digest_response(material: DigestMaterial<'_>) -> String {
     let DigestMaterial {
-        username, password, realm, nonce, method, uri, algorithm, qop_auth, cnonce,
+        username,
+        password,
+        realm,
+        nonce,
+        method,
+        uri,
+        algorithm,
+        qop_auth,
+        cnonce,
     } = material;
     let initial_ha1 = md5_hex(&format!("{username}:{realm}:{password}"));
     let ha1 = if algorithm.eq_ignore_ascii_case("MD5-sess") {
@@ -473,14 +489,21 @@ pub fn inspect(
             return result;
         }
     };
-    let mut response =
-        match request_on_stream(&mut connection, SocketAddrV4::new(ip, port), &path, "DESCRIBE", 2, None, None) {
-            Ok(response) => response,
-            Err(error) => {
-                result.message = format!("DESCRIBE failed: {error}");
-                return result;
-            }
-        };
+    let mut response = match request_on_stream(
+        &mut connection,
+        SocketAddrV4::new(ip, port),
+        &path,
+        "DESCRIBE",
+        2,
+        None,
+        None,
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            result.message = format!("DESCRIBE failed: {error}");
+            return result;
+        }
+    };
     result.initial_describe_status = Some(response.status);
     result.describe_status = Some(response.status);
     if result.server.is_none() {
@@ -638,10 +661,15 @@ mod tests {
         // Fixed external fixture. This is the exact variant advertised by
         // the household YGTek: MD5 with no qop.
         let response = digest_response(DigestMaterial {
-            username: "alice", password: "mypassword", realm: "camera",
-            nonce: "1234abcd", method: "DESCRIBE",
+            username: "alice",
+            password: "mypassword",
+            realm: "camera",
+            nonce: "1234abcd",
+            method: "DESCRIBE",
             uri: "rtsp://192.168.0.100:8554/profile0",
-            algorithm: "MD5", qop_auth: false, cnonce: "unused",
+            algorithm: "MD5",
+            qop_auth: false,
+            cnonce: "unused",
         });
         assert_eq!(response, "2ece67e13ce3ee6f592f02f8346422cd");
     }
@@ -650,10 +678,15 @@ mod tests {
     fn digest_with_qop_matches_rfc2617_mufasa_vector() {
         // RFC 2617 section 3.5: response for qop=auth, nc=00000001.
         let response = digest_response(DigestMaterial {
-            username: "Mufasa", password: "Circle Of Life",
-            realm: "testrealm@host.com", nonce: "dcd98b7102dd2f0e8b11d0f600bfb0c093",
-            method: "GET", uri: "/dir/index.html",
-            algorithm: "MD5", qop_auth: true, cnonce: "0a4f113b",
+            username: "Mufasa",
+            password: "Circle Of Life",
+            realm: "testrealm@host.com",
+            nonce: "dcd98b7102dd2f0e8b11d0f600bfb0c093",
+            method: "GET",
+            uri: "/dir/index.html",
+            algorithm: "MD5",
+            qop_auth: true,
+            cnonce: "0a4f113b",
         });
         assert_eq!(response, "6629fae49393a05397450978507c4ef1");
     }
@@ -661,10 +694,15 @@ mod tests {
     #[test]
     fn md5_sess_without_qop_matches_fixed_known_answer() {
         let response = digest_response(DigestMaterial {
-            username: "alice", password: "mypassword", realm: "camera",
-            nonce: "1234abcd", method: "DESCRIBE",
+            username: "alice",
+            password: "mypassword",
+            realm: "camera",
+            nonce: "1234abcd",
+            method: "DESCRIBE",
             uri: "rtsp://192.168.0.100:8554/profile0",
-            algorithm: "MD5-sess", qop_auth: false, cnonce: "fixed-test-cnonce",
+            algorithm: "MD5-sess",
+            qop_auth: false,
+            cnonce: "fixed-test-cnonce",
         });
         assert_eq!(response, "dd2115c0828d8ff26ba4c621bbba564b");
     }
