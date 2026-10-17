@@ -1001,7 +1001,7 @@ impl OculariumApp {
         ui.separator();
         ui.collapsing(format!(
             "Saved passive neighbor history ({} MAC identities)",
-            entries.len(),
+            self.neighbor_archive.known_count(scope),
         ), |ui| {
             ui.label(
                 RichText::new(
