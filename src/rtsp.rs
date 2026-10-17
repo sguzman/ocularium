@@ -137,15 +137,14 @@ fn connect(ip: Ipv4Addr, port: u16) -> Result<TcpStream, String> {
 /// bind their Digest challenge and authorization exchange to one socket.
 fn request_on_stream(
     stream: &mut TcpStream,
-    ip: Ipv4Addr,
-    port: u16,
+    endpoint: SocketAddrV4,
     path: &str,
     method: &str,
     seq: u8,
     authorization: Option<&str>,
     sent: Option<&mut bool>,
 ) -> Result<Response, String> {
-    let uri = format!("rtsp://{ip}:{port}{path}");
+    let uri = format!("rtsp://{}:{}{path}", endpoint.ip(), endpoint.port());
     let mut packet = format!(
         "{method} {uri} RTSP/1.0\r\nCSeq: {seq}\r\nUser-Agent: Ocularium/0.1\r\nAccept: application/sdp\r\n"
     );
@@ -203,7 +202,7 @@ fn request(
     authorization: Option<&str>,
 ) -> Result<Response, String> {
     let mut stream = connect(ip, port)?;
-    request_on_stream(&mut stream, ip, port, path, method, seq, authorization, None)
+    request_on_stream(&mut stream, SocketAddrV4::new(ip, port), path, method, seq, authorization, None)
 }
 
 // Parse a Digest challenge, respecting commas inside quoted qop lists.
@@ -275,17 +274,22 @@ fn md5_hex(value: &str) -> String {
 /// Standard RFC 2069/2617 Digest response calculation, kept separate
 /// from header serialization so MD5, MD5-sess and qop variants can be
 /// checked against independent published and fixed known-answer vectors.
-fn digest_response(
-    username: &str,
-    password: &str,
-    realm: &str,
-    nonce: &str,
-    method: &str,
-    uri: &str,
-    algorithm: &str,
+struct DigestMaterial<'a> {
+    username: &'a str,
+    password: &'a str,
+    realm: &'a str,
+    nonce: &'a str,
+    method: &'a str,
+    uri: &'a str,
+    algorithm: &'a str,
     qop_auth: bool,
-    cnonce: &str,
-) -> String {
+    cnonce: &'a str,
+}
+
+fn digest_response(material: DigestMaterial<'_>) -> String {
+    let DigestMaterial {
+        username, password, realm, nonce, method, uri, algorithm, qop_auth, cnonce,
+    } = material;
     let initial_ha1 = md5_hex(&format!("{username}:{realm}:{password}"));
     let ha1 = if algorithm.eq_ignore_ascii_case("MD5-sess") {
         md5_hex(&format!("{initial_ha1}:{nonce}:{cnonce}"))
@@ -331,17 +335,17 @@ fn digest_authorization(
         return Err("Server requires an unsupported Digest qop".into());
     }
     let cnonce = uuid::Uuid::new_v4().simple().to_string();
-    let response = digest_response(
-        &credentials.username,
-        &credentials.password,
+    let response = digest_response(DigestMaterial {
+        username: &credentials.username,
+        password: &credentials.password,
         realm,
         nonce,
         method,
         uri,
         algorithm,
-        qop.is_some(),
-        &cnonce,
-    );
+        qop_auth: qop.is_some(),
+        cnonce: &cnonce,
+    });
     let mut value = format!(
         "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", response=\"{response}\"",
         escape_quoted(&credentials.username),
@@ -470,7 +474,7 @@ pub fn inspect(
         }
     };
     let mut response =
-        match request_on_stream(&mut connection, ip, port, &path, "DESCRIBE", 2, None, None) {
+        match request_on_stream(&mut connection, SocketAddrV4::new(ip, port), &path, "DESCRIBE", 2, None, None) {
             Ok(response) => response,
             Err(error) => {
                 result.message = format!("DESCRIBE failed: {error}");
@@ -506,8 +510,7 @@ pub fn inspect(
                         // is never returned in diagnostics, exports, or UI.
                         match request_on_stream(
                             &mut connection,
-                            ip,
-                            port,
+                            SocketAddrV4::new(ip, port),
                             &path,
                             "DESCRIBE",
                             3,
@@ -634,31 +637,35 @@ mod tests {
     fn digest_no_qop_matches_independent_md5_known_answer() {
         // Fixed external fixture. This is the exact variant advertised by
         // the household YGTek: MD5 with no qop.
-        let response = digest_response(
-            "alice", "mypassword", "camera", "1234abcd", "DESCRIBE",
-            "rtsp://192.168.0.100:8554/profile0", "MD5", false, "unused"
-        );
+        let response = digest_response(DigestMaterial {
+            username: "alice", password: "mypassword", realm: "camera",
+            nonce: "1234abcd", method: "DESCRIBE",
+            uri: "rtsp://192.168.0.100:8554/profile0",
+            algorithm: "MD5", qop_auth: false, cnonce: "unused",
+        });
         assert_eq!(response, "2ece67e13ce3ee6f592f02f8346422cd");
     }
 
     #[test]
     fn digest_with_qop_matches_rfc2617_mufasa_vector() {
         // RFC 2617 section 3.5: response for qop=auth, nc=00000001.
-        let response = digest_response(
-            "Mufasa", "Circle Of Life", "testrealm@host.com",
-            "dcd98b7102dd2f0e8b11d0f600bfb0c093", "GET",
-            "/dir/index.html", "MD5", true, "0a4f113b"
-        );
+        let response = digest_response(DigestMaterial {
+            username: "Mufasa", password: "Circle Of Life",
+            realm: "testrealm@host.com", nonce: "dcd98b7102dd2f0e8b11d0f600bfb0c093",
+            method: "GET", uri: "/dir/index.html",
+            algorithm: "MD5", qop_auth: true, cnonce: "0a4f113b",
+        });
         assert_eq!(response, "6629fae49393a05397450978507c4ef1");
     }
 
     #[test]
     fn md5_sess_without_qop_matches_fixed_known_answer() {
-        let response = digest_response(
-            "alice", "mypassword", "camera", "1234abcd", "DESCRIBE",
-            "rtsp://192.168.0.100:8554/profile0", "MD5-sess", false,
-            "fixed-test-cnonce"
-        );
+        let response = digest_response(DigestMaterial {
+            username: "alice", password: "mypassword", realm: "camera",
+            nonce: "1234abcd", method: "DESCRIBE",
+            uri: "rtsp://192.168.0.100:8554/profile0",
+            algorithm: "MD5-sess", qop_auth: false, cnonce: "fixed-test-cnonce",
+        });
         assert_eq!(response, "dd2115c0828d8ff26ba4c621bbba564b");
     }
 
