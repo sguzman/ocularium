@@ -91,8 +91,7 @@ impl NeighborArchive {
                     )))
                 }
                 Err(error) => {
-                    let mut archive = Self::default();
-                    archive.read_only = true;
+                    let archive = Self { read_only: true, ..Self::default() };
                     (archive, Some(format!(
                         "Passive history could not be parsed; existing file preserved: {error}"
                     )))
@@ -100,8 +99,7 @@ impl NeighborArchive {
             },
             Err(error) if error.kind() == io::ErrorKind::NotFound => (Self::default(), None),
             Err(error) => {
-                let mut archive = Self::default();
-                archive.read_only = true;
+                let archive = Self { read_only: true, ..Self::default() };
                 (archive, Some(format!(
                     "Passive history cannot be opened; file preserved: {error}"
                 )))
