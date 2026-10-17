@@ -61,7 +61,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Replace ambiguous RTSP action label with Test RTSP access and clarify authentication failures
 - [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
 - [ ] go2rtc integration and live multi-camera viewing
-- [ ] Snapshot capture
+- [x] Optional one-frame CPU RTSP capture with local ffmpeg for unauthenticated, explicitly supplied streams, bounded to 12 seconds and 640×360 in-memory pixels
+- [ ] Secure authenticated snapshot decoding without exposing credentials in subprocess arguments
+- [ ] Continuous live preview and multi-camera viewing
 - [ ] Represent cloud-only camera limitations clearly
 
 ## Milestone 0.4 — Agent access
