@@ -397,6 +397,20 @@ impl OculariumApp {
                 .filter(|d| d.is_camera_candidate())
                 .count(),
         );
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            let profiles = self.registry.camera_profiles_for_scope(scope);
+            let _ = writeln!(report,
+                "User camera inventory: {} saved roles/apps (assertions, not verified video)",
+                profiles.len()
+            );
+            for profile in profiles {
+                let _ = writeln!(report,
+                    "  User camera profile: last IP={} · MAC={} · role={} · app={} · current scan presence unverified",
+                    profile.last_ip, profile.mac.as_deref().unwrap_or("-"),
+                    profile.role.label(), profile.app.label()
+                );
+            }
+        }
         if let Some(deep) = &self.deep_report {
             let _ = writeln!(report, "{}", deep.summary());
         }
@@ -470,6 +484,14 @@ impl OculariumApp {
             );
             if let Some(alias) = self.registry.alias(device) {
                 let _ = writeln!(report, "  User label: {alias}");
+            }
+            if let Some(scope) = self.scopes.get(self.selected_scope) {
+                if let Some(profile) = self.registry.camera_profile(scope, device) {
+                    let _ = writeln!(report,
+                        "  User-reported identity: role={} · app={} (not verified stream)",
+                        profile.role.label(), profile.app.label()
+                    );
+                }
             }
             if let Some(scope) = self.scopes.get(self.selected_scope) {
                 if let Some((lease, matched_by)) = self.dhcp.match_device(scope, device) {
