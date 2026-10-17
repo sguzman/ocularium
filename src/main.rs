@@ -11,6 +11,7 @@ mod neighbor_history;
 mod neighbor_watch;
 mod registry;
 mod rtsp;
+mod snapshot;
 
 use eframe::egui;
 
