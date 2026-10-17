@@ -1171,6 +1171,70 @@ impl OculariumApp {
         });
     }
 
+    fn onvif_panel(&mut self, ui: &mut egui::Ui, device: &Device) {
+        ui.separator();
+        ui.strong("ONVIF device capabilities");
+        let advertised = !device.onvif_xaddrs.is_empty();
+        ui.label(
+            RichText::new(
+                if advertised {
+                    "This device advertised ONVIF service URLs. Inspect one same-host advertised endpoint without credentials."
+                } else {
+                    "No ONVIF endpoint was advertised. You can check the standard /onvif/device_service path once on this device (HTTP port 80). This does not establish cloud-only operation."
+                },
+            ).small().color(MUTED),
+        );
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(
+                self.onvif_inspecting.is_none() && !self.scanning,
+                egui::Button::new(
+                    if advertised { "Inspect advertised ONVIF" } else { "Check standard ONVIF service" }
+                ),
+            ).on_hover_text(
+                "One read-only GetCapabilities request to this LAN device, no credentials, no redirects and no port sweep.",
+            ).clicked() {
+                let (tx, rx) = mpsc::channel();
+                let ip = device.ip;
+                let xaddrs = device.onvif_xaddrs.clone();
+                self.onvif_inspecting = Some(ip);
+                self.onvif_results.remove(&ip);
+                self.onvif_receiver = Some(rx);
+                thread::spawn(move || {
+                    let result = onvif_capabilities::inspect(ip, xaddrs);
+                    let _ = tx.send(result);
+                });
+            }
+            if self.onvif_inspecting == Some(device.ip) {
+                ui.spinner();
+                ui.label("Inspecting ONVIF (bounded local request)");
+            }
+        });
+        if let Some(result) = self.onvif_results.get(&device.ip) {
+            ui.label(format!(
+                "HTTP status: {} · {}",
+                result.status.map_or_else(|| "no response".to_owned(), |v| v.to_string()),
+                result.message,
+            ));
+            ui.label(format!(
+                "Endpoint: {} on port {} · SOAP fault: {}",
+                if result.advertised_endpoint { "advertised by device" } else { "standard fallback" },
+                result.port, result.fault,
+            ));
+            if !result.categories.is_empty() {
+                ui.label(format!("ONVIF capabilities: {}", result.categories.join(", ")));
+                ui.label(format!(
+                    "Same-host media service advertised: {} (not verified video)",
+                    if result.same_host_media { "yes" } else { "not confirmed" },
+                ));
+            }
+            if ui.button("Copy safe ONVIF diagnostic").on_hover_text(
+                "Copies HTTP status and capability flags only; no raw endpoint URLs or credentials.",
+            ).clicked() {
+                ui.ctx().copy_text(result.safe_summary());
+            }
+        }
+    }
+
     fn details_panel(&mut self, ui: &mut egui::Ui) {
         ui.separator();
         ui.heading("Device details");
@@ -1293,6 +1357,7 @@ impl OculariumApp {
             "RTSP OPTIONS answered: {} (not a verified playable stream)",
             if device.rtsp_responded { "yes" } else { "no" }
         ));
+        self.onvif_panel(ui, &device);
         let rtsp_ports: Vec<u16> = device
             .open_ports
             .iter()
