@@ -48,7 +48,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Conservative classification of AirPlay, Cast, workstation, SFTP and Matter advertisements from mDNS
 - [x] Opt-in, no-privilege Linux kernel ARP neighbor-cache observation, scoped to selected interface, with 10-second interval and explicit start/stop
 - [x] In-session bounded neighbor event log and cache-first/cache-last sightings, correlated with imported DHCP MAC names; no false online/offline claims
-- [ ] Persist passive neighbor observations across restarts (opt-in), keeping them distinct from completed active scans
+- [x] Opt-in persistent MAC-based passive observations with historical IPs, observation-session counts, and bounded cache events
+- [x] Periodic and on-stop/exit writes; session checkpoints prevent double-counting repeated saves, and active full-scan history remains separate
+- [ ] Provide in-app deletion of saved passive history and structured export options
 - [ ] Historical evidence tracking and multi-source confidence calibration
 
 ## Milestone 0.3 — View
