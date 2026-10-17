@@ -92,6 +92,12 @@ impl OculariumApp {
         if let Some(warning) = registry_warning {
             messages.push(warning);
         }
+        // Prefer the available LAN containing saved camera records on startup,
+        // instead of defaulting to an unrelated container/bridge interface.
+        // This selects an interface only; no network request is made.
+        let selected_scope = scopes.iter()
+            .position(|scope| !registry.camera_profiles_for_scope(scope).is_empty())
+            .unwrap_or(0);
         let (history, history_warning) = HistoryStore::load();
         if let Some(warning) = history_warning {
             messages.push(warning);
@@ -106,7 +112,7 @@ impl OculariumApp {
         }
         Self {
             scopes,
-            selected_scope: 0,
+            selected_scope,
             devices: BTreeMap::new(),
             selected_device: None,
             selected_saved_camera: None,
@@ -382,8 +388,10 @@ impl OculariumApp {
     fn refresh_interfaces(&mut self) {
         match discovery::interfaces() {
             Ok(scopes) => {
+                self.selected_scope = scopes.iter()
+                    .position(|scope| !self.registry.camera_profiles_for_scope(scope).is_empty())
+                    .unwrap_or(0);
                 self.scopes = scopes;
-                self.selected_scope = 0;
                 self.selected_saved_camera = None;
             }
             Err(err) => self.messages.push(format!("Network interfaces: {err}")),
