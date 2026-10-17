@@ -21,7 +21,7 @@ use crate::{
     neighbor_history::NeighborArchive,
     neighbor_watch::NeighborWatch,
     onvif_capabilities::{self, CapabilityResult},
-    registry::Registry,
+    registry::{CameraApp, CameraRole, Registry},
     rtsp::{self, RtspInspection},
     snapshot::{self, SnapshotResult},
 };
@@ -58,6 +58,8 @@ pub struct OculariumApp {
     dhcp_text: String,
     dhcp_message: Option<String>,
     alias_edit: String,
+    camera_role_edit: CameraRole,
+    camera_app_edit: CameraApp,
     rtsp_path: String,
     rtsp_username: String,
     show_rtsp_username: bool,
@@ -128,6 +130,8 @@ impl OculariumApp {
             dhcp_text: String::new(),
             dhcp_message: None,
             alias_edit: String::new(),
+            camera_role_edit: CameraRole::default(),
+            camera_app_edit: CameraApp::default(),
             rtsp_path: "/".into(),
             rtsp_username: String::new(),
             show_rtsp_username: false,
@@ -154,6 +158,8 @@ impl OculariumApp {
         self.devices.clear();
         self.selected_device = None;
         self.alias_edit.clear();
+        self.camera_role_edit = CameraRole::default();
+        self.camera_app_edit = CameraApp::default();
         self.rtsp_path = "/".into();
         self.rtsp_username.clear();
         self.show_rtsp_username = false;
@@ -550,22 +556,38 @@ impl OculariumApp {
         report
     }
 
+    fn user_camera_role(&self, device: &Device) -> CameraRole {
+        self.scopes.get(self.selected_scope)
+            .and_then(|scope| self.registry.camera_profile(scope, device))
+            .map_or(CameraRole::Unreviewed, |profile| profile.role)
+    }
+
+    fn camera_filter_match(&self, device: &Device) -> bool {
+        match self.user_camera_role(device) {
+            CameraRole::Possible | CameraRole::UserConfirmed => true,
+            CameraRole::NotCamera => false,
+            CameraRole::Unreviewed => device.is_camera_candidate(),
+        }
+    }
+
     fn overview(&self, ui: &mut egui::Ui) {
-        let candidates = self
-            .devices
-            .values()
-            .filter(|d| d.is_camera_candidate())
-            .count();
+        let candidates = self.devices.values()
+            .filter(|d| self.camera_filter_match(d)).count();
+        let user_marked = self.devices.values()
+            .filter(|d| self.user_camera_role(d).marked_camera()).count();
         let unidentified = self
             .devices
             .values()
-            .filter(|d| classify::classify(d).needs_identification())
+            .filter(|d| classify::classify(d).needs_identification()
+                && !self.user_camera_role(d).marked_camera())
             .count();
         let equipment = self.devices.len().saturating_sub(candidates + unidentified);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(format!("{} discovered devices", self.devices.len())).strong());
             ui.separator();
-            ui.label(RichText::new(format!("{candidates} camera candidates")).color(HIGHLIGHT));
+            ui.label(RichText::new(format!("{candidates} camera candidates (including user labels)")).color(HIGHLIGHT));
+            ui.separator();
+            ui.label(format!("{user_marked} user-marked cameras"));
             ui.separator();
             ui.label(format!("{equipment} identified equipment"));
             ui.separator();
@@ -759,8 +781,8 @@ impl OculariumApp {
         let devices: Vec<Device> = self
             .devices
             .values()
-            .filter(|d| !self.camera_only || d.is_camera_candidate())
-            .filter(|d| !self.unidentified_only || classify::classify(d).needs_identification())
+            .filter(|d| !self.camera_only || self.camera_filter_match(d))
+            .filter(|d| !self.unidentified_only || (classify::classify(d).needs_identification() && !self.user_camera_role(d).marked_camera()))
             .filter(|d| {
                 needle.is_empty()
                     || d.ip.to_string().contains(&needle)
@@ -769,6 +791,12 @@ impl OculariumApp {
                         .alias(d)
                         .is_some_and(|name| name.to_ascii_lowercase().contains(&needle))
                     || d.classification().to_ascii_lowercase().contains(&needle)
+                    || self.scopes.get(self.selected_scope)
+                        .and_then(|scope| self.registry.camera_profile(scope, d))
+                        .is_some_and(|profile| {
+                            profile.role.label().to_ascii_lowercase().contains(&needle)
+                                || profile.app.label().to_ascii_lowercase().contains(&needle)
+                        })
                     || self
                         .scopes
                         .get(self.selected_scope)
@@ -840,6 +868,8 @@ impl OculariumApp {
                         ui.strong("IP address");
                         ui.strong("Label");
                         ui.strong("DHCP name");
+                        ui.strong("User camera role");
+                        ui.strong("Camera app");
                         ui.strong("Classification");
                         ui.strong("Evidence");
                         ui.strong("Ports");
@@ -857,6 +887,10 @@ impl OculariumApp {
                             {
                                 self.selected_device = Some(d.ip);
                                 self.alias_edit = self.registry.alias(d).unwrap_or("").to_owned();
+                                let profile = self.scopes.get(self.selected_scope)
+                                    .and_then(|scope| self.registry.camera_profile(scope, d));
+                                self.camera_role_edit = profile.map_or(CameraRole::default(), |p| p.role);
+                                self.camera_app_edit = profile.map_or(CameraApp::default(), |p| p.app);
                                 self.rtsp_path = "/".into();
                                 self.rtsp_username.clear();
                                 self.rtsp_password.clear();
@@ -874,6 +908,11 @@ impl OculariumApp {
                                     how.description()
                                 )
                             ));
+                            let profile = self.scopes.get(self.selected_scope)
+                                .and_then(|scope| self.registry.camera_profile(scope, d));
+                            ui.label(profile.map_or("-", |p| p.role.label()))
+                                .on_hover_text("User-reported identity, not automated hardware identification.");
+                            ui.label(profile.map_or("-", |p| p.app.label()));
                             let classified = classify::classify(d);
                             let color = match classified.category {
                                 DeviceCategory::CameraCandidate => HIGHLIGHT,
