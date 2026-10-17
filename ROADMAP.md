@@ -28,6 +28,10 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] User-reported camera role and app catalog (ANRAN, VicoHome, other, no app), separate from protocol-derived confidence
 - [x] LAN-scoped MAC-first persistent camera identities; preserve unseen user-labeled cameras across scans
 - [x] Camera inventory, table filters, and safe reports include explicit user provenance without claiming playable video
+- [x] Optional user-entered private camera hardware metadata (model, firmware, platform, serial/device ID), backward-compatible registry
+- [x] Owner-only Linux registry file writes, masked device ID UI and serial-redacted copied reports
+- [x] Show session-specific, protocol-grounded local video evidence separately from app/model identity
+- [ ] Validate ANRAN and VicoHome official/authorized integration opportunities before collecting any app credentials
 - [ ] Correlate user-labeled household cameras with app-side device identifiers if supported, without assuming cloud API availability
 - [ ] Authenticate authorized ONVIF responses when the user supplies credentials, without brute forcing
 - [ ] Better interface-aware multicast routing
