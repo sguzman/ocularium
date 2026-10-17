@@ -607,6 +607,7 @@ impl OculariumApp {
                         watch.stop();
                     }
                     self.watch_running = false;
+                    self.persist_neighbor_observations();
                 }
                 ui.label(RichText::new("Reading local kernel neighbor cache every 10 seconds").color(HIGHLIGHT).small());
             } else if ui
@@ -617,10 +618,23 @@ impl OculariumApp {
                 )
                 .clicked()
             {
-                if let Some(scope) = self.scopes.get(self.selected_scope) {
-                    self.watch = Some(NeighborWatch::start(scope.clone()));
+                if let Some(scope) = self.scopes.get(self.selected_scope).cloned() {
+                    self.persist_neighbor_observations();
+                    self.watch = Some(NeighborWatch::start(scope));
                     self.watch_running = true;
+                    self.last_neighbor_flush = None;
                 }
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(
+                &mut self.remember_neighbors,
+                "Save neighbor observations across restarts",
+            ).on_hover_text(
+                "Off by default. Saves bounded MAC/IP history and cache events locally every 60 seconds and on Stop/Exit. Disabling does not erase previously saved data.",
+            );
+            if let Some(message) = &self.neighbor_archive_status {
+                ui.label(RichText::new(message).small().color(MUTED));
             }
         });
     }
@@ -1031,6 +1045,19 @@ impl OculariumApp {
             ui.label(RichText::new("Select a device by clicking its IP address.").color(MUTED));
             return;
         };
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            if let Some(mac) = device.mac.as_deref() {
+                if let Some(record) = self.neighbor_archive.by_mac(scope, mac) {
+                    ui.label(format!(
+                        "Saved passive history: {} sessions · first {} · last {} · observed IPs {:?}",
+                        record.sessions,
+                        history::display_time(record.first_seen),
+                        history::display_time(record.last_seen),
+                        record.ips,
+                    ));
+                }
+            }
+        }
         if let Some(watch) = &self.watch {
             if self.scopes.get(self.selected_scope) == Some(watch.scope()) {
                 if let Some(record) = watch.seen(device.ip) {
