@@ -26,6 +26,12 @@ The **Household camera inventory** section includes user-marked possible/confirm
 
 No credentials, video frames, app tokens, or cloud accounts are saved. User confirmation means someone identified the camera, **not** that RTSP/ONVIF works, that the device is connected, or that Ocularium can play video.
 
+## Editing saved camera records without scanning
+
+**Saved camera records** appears above the live discovery table and is expanded by default on launch. It shows **every explicitly saved camera profile**, including entries left at **Not reviewed** that contain only a saved model such as CQ1F. Click **Edit saved** to update the label, role, managing app, model, firmware, platform, or private serial without running a LAN scan. Only the saved MAC/IP identity is reconstructed for editing; it is **never inserted into the active discovery results**, and saved-record editing does not trigger RTSP, ONVIF, or other network probes. The status clearly distinguishes historical records from devices observed in a current scan.
+
+When possible, Ocularium initially selects an available LAN that already has saved camera records instead of an unrelated bridge interface. This changes only the selected dropdown; it does not scan. The saved editor uses the existing backwards-compatible local registry, and serial numbers remain masked and omitted from copied reports. Existing saved roles, labels, and metadata remain unchanged during the upgrade.
+
 ## Private camera hardware metadata and access evidence
 
 The camera identity editor now has an optional **Camera hardware details** section for model, firmware, device platform/MCU, and a user-entered serial/device ID. These fields are saved **only when you click Save camera identity**; they are not prefilled with private household identifiers in this public repository. Serial fields are masked by default, excluded from **Copy report**, and replaced there with a yes/no presence flag. The XDG-local `registry.json` is written using owner-only permissions (`0600`) on Linux. No app passwords, cloud login tokens, video, or credentials are stored.
