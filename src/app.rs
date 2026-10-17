@@ -59,6 +59,7 @@ pub struct OculariumApp {
     alias_edit: String,
     rtsp_path: String,
     rtsp_username: String,
+    show_rtsp_username: bool,
     rtsp_password: String,
     rtsp_receiver: Option<Receiver<RtspInspection>>,
     inspecting: Option<(Ipv4Addr, u16)>,
@@ -125,6 +126,7 @@ impl OculariumApp {
             alias_edit: String::new(),
             rtsp_path: "/".into(),
             rtsp_username: String::new(),
+            show_rtsp_username: false,
             rtsp_password: String::new(),
             rtsp_receiver: None,
             inspecting: None,
@@ -147,6 +149,7 @@ impl OculariumApp {
         self.alias_edit.clear();
         self.rtsp_path = "/".into();
         self.rtsp_username.clear();
+        self.show_rtsp_username = false;
         self.rtsp_password.clear();
         self.rtsp_receiver = None;
         self.inspecting = None;
@@ -1284,7 +1287,16 @@ impl OculariumApp {
             });
             ui.horizontal_wrapped(|ui| {
                 ui.label("Optional username");
-                ui.add(egui::TextEdit::singleline(&mut self.rtsp_username).desired_width(150.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.rtsp_username)
+                        .password(!self.show_rtsp_username)
+                        .desired_width(150.0),
+                );
+                if ui.small_button(
+                    if self.show_rtsp_username { "Hide" } else { "Show" }
+                ).on_hover_text("Username is hidden by default to avoid exposing it in screenshots.").clicked() {
+                    self.show_rtsp_username = !self.show_rtsp_username;
+                }
                 ui.label("Password");
                 ui.add(
                     egui::TextEdit::singleline(&mut self.rtsp_password)
@@ -1293,7 +1305,7 @@ impl OculariumApp {
                 );
             });
             ui.label(RichText::new(
-                "Optional: enter your camera's RTSP login. Leave both fields blank if you don't know it. Testing never displays video or saves credentials.",
+                "Optional: enter the camera's RTSP login. Username is hidden by default; password is always masked and cleared after testing. No credentials are saved or exported.",
             ).small().color(MUTED));
         }
         for port in rtsp_ports {
