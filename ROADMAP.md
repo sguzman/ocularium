@@ -59,6 +59,10 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Bounded RTSP OPTIONS/DESCRIBE inspection, including user-provided stream path and optional one-shot MD5/MD5-sess Digest authentication
 - [x] Hide passwords in egui and clear them after use; never persist or export them
 - [x] Replace ambiguous RTSP action label with Test RTSP access and clarify authentication failures
+- [x] Report initial and authenticated DESCRIBE status separately, whether a Digest retry was sent, and redacted algorithm/qop/stale challenge metadata
+- [x] Reuse challenge TCP connection for one authenticated DESCRIBE retry; mock RTSP server tests validate handshake and rejection cases
+- [x] Copy safe RTSP diagnostic with no password, username, stream path, Digest realm, nonce or Authorization header
+- [ ] Verify the YGtek RTSP Server 2.0 challenge/response on household hardware with supplied credentials and non-guesswork stream path
 - [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
 - [ ] go2rtc integration and live multi-camera viewing
 - [x] Optional one-frame CPU RTSP capture with local ffmpeg for unauthenticated, explicitly supplied streams, bounded to 12 seconds and 640×360 in-memory pixels
