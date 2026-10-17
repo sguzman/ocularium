@@ -22,6 +22,7 @@ use crate::{
     neighbor_watch::NeighborWatch,
     registry::Registry,
     rtsp::{self, RtspInspection},
+    snapshot::{self, SnapshotResult},
 };
 
 const HIGHLIGHT: Color32 = Color32::from_rgb(91, 209, 189);
@@ -62,6 +63,11 @@ pub struct OculariumApp {
     rtsp_receiver: Option<Receiver<RtspInspection>>,
     inspecting: Option<(Ipv4Addr, u16)>,
     inspections: BTreeMap<(Ipv4Addr, u16), RtspInspection>,
+    snapshot_receiver: Option<Receiver<SnapshotResult>>,
+    snapshot_busy: Option<(Ipv4Addr, u16)>,
+    snapshot_pending: Option<SnapshotResult>,
+    snapshot_texture: Option<(Ipv4Addr, u16, String, egui::TextureHandle)>,
+    snapshot_error: Option<(Ipv4Addr, u16, String)>,
 }
 
 impl OculariumApp {
@@ -123,6 +129,11 @@ impl OculariumApp {
             rtsp_receiver: None,
             inspecting: None,
             inspections: BTreeMap::new(),
+            snapshot_receiver: None,
+            snapshot_busy: None,
+            snapshot_pending: None,
+            snapshot_texture: None,
+            snapshot_error: None,
         }
     }
 
@@ -140,6 +151,11 @@ impl OculariumApp {
         self.rtsp_receiver = None;
         self.inspecting = None;
         self.inspections.clear();
+        self.snapshot_receiver = None;
+        self.snapshot_busy = None;
+        self.snapshot_pending = None;
+        self.snapshot_texture = None;
+        self.snapshot_error = None;
         self.messages.clear();
         self.completed = 0;
         self.total = scope.hosts_total();
@@ -286,6 +302,22 @@ impl OculariumApp {
         if disconnected {
             self.receiver = None;
             self.cancelled = None;
+        }
+        if let Some(rx) = self.snapshot_receiver.take() {
+            match rx.try_recv() {
+                Ok(captured) => {
+                    self.snapshot_busy = None;
+                    self.snapshot_pending = Some(captured);
+                }
+                Err(mpsc::TryRecvError::Empty) => self.snapshot_receiver = Some(rx),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.snapshot_busy = None;
+                    self.snapshot_error = Some((
+                        Ipv4Addr::UNSPECIFIED, 0,
+                        "Snapshot worker stopped unexpectedly".into(),
+                    ));
+                }
+            }
         }
         if let Some(rx) = self.rtsp_receiver.take() {
             match rx.try_recv() {
@@ -1394,7 +1426,28 @@ impl Drop for OculariumApp {
 impl eframe::App for OculariumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
-        if self.scanning || self.inspecting.is_some() || self.watch_running {
+        if let Some(result) = self.snapshot_pending.take() {
+            if let Some(pixels) = result.pixels {
+                let image = egui::ColorImage::from_rgb(
+                    [snapshot::WIDTH, snapshot::HEIGHT], &pixels,
+                );
+                let texture = ctx.load_texture(
+                    format!("ocularium-rtsp-{}-{}", result.ip, result.port),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                );
+                self.snapshot_texture = Some((result.ip, result.port, result.path, texture));
+                self.snapshot_error = None;
+            } else {
+                self.snapshot_texture = None;
+                self.snapshot_error = Some((
+                    result.ip, result.port,
+                    result.error.unwrap_or_else(|| "No frame was decoded".into()),
+                ));
+            }
+        }
+        if self.scanning || self.inspecting.is_some() || self.watch_running
+            || self.snapshot_busy.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
