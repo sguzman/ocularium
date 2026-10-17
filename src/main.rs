@@ -9,6 +9,7 @@ mod identity;
 mod mdns;
 mod neighbor_history;
 mod neighbor_watch;
+mod onvif_capabilities;
 mod registry;
 mod rtsp;
 mod snapshot;
