@@ -172,10 +172,15 @@ pub fn parse_frame(data: &[u8]) -> Result<(MediaFrame<'_>, usize), FrameError> {
     Ok((MediaFrame { kind, timestamp_ms, sequence, payload }, end))
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct SequenceGate {
     last: Option<u32>,
     needs_keyframe: bool,
+}
+impl Default for SequenceGate {
+    fn default() -> Self {
+        Self { last: None, needs_keyframe: true }
+    }
 }
 impl SequenceGate {
     pub fn reset(&mut self) {
@@ -298,6 +303,7 @@ mod tests {
         let (next, _) = parse_frame(&p).unwrap();
         let (back, _) = parse_frame(&b).unwrap();
         let mut gate = SequenceGate::default();
+        assert!(!gate.accept(&next)); // startup is keyframe-gated too
         gate.reset();
         assert!(!gate.accept(&next));
         assert!(gate.accept(&key));
