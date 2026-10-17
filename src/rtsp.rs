@@ -39,6 +39,24 @@ pub struct RtspInspection {
 }
 
 impl RtspInspection {
+    pub fn safe_diagnostic(&self) -> String {
+        // Keep the user-supplied path out: some devices embed secret tokens
+        // in stream paths. Never export username, password, nonce, realm,
+        // complete challenge, or Authorization header.
+        let status = |value: Option<u16>| {
+            value.map(|code| code.to_string()).unwrap_or_else(|| "no response".into())
+        };
+        format!(
+            "Ocularium RTSP access diagnostic (no secrets or stream path)\nEndpoint: {}:{}\nOPTIONS: {}\nInitial DESCRIBE: {}\nAuthenticated retry sent: {}\nAuthenticated retry response: {}\nFinal DESCRIBE: {}\nChallenge metadata: {}\nAssessment: {}\nSDP returned: {}\n",
+            self.ip, self.port, status(self.options_status),
+            status(self.initial_describe_status), self.retry_attempted,
+            status(self.authenticated_retry_status),
+            status(self.describe_status),
+            self.challenge_summary.as_deref().unwrap_or("none received"),
+            self.auth_diagnostic, self.sdp_received,
+        )
+    }
+
     pub fn summary(&self) -> String {
         let describe = self
             .describe_status
@@ -419,7 +437,8 @@ pub fn inspect(
     }
 
     if response.status == 401 {
-        match (credentials, response.www_authenticate.as_deref()) {
+        let challenge_for_retry = response.www_authenticate.clone();
+        match (credentials, challenge_for_retry.as_deref()) {
             (None, _) => {
                 result.auth_diagnostic = "Credentials not provided; no authenticated request sent".into();
             }
