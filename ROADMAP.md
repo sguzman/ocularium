@@ -61,6 +61,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Replace ambiguous RTSP action label with Test RTSP access and clarify authentication failures
 - [x] Report initial and authenticated DESCRIBE status separately, whether a Digest retry was sent, and redacted algorithm/qop/stale challenge metadata
 - [x] Reuse challenge TCP connection for one authenticated DESCRIBE retry; mock RTSP server tests validate handshake and rejection cases
+- [x] Validate Digest response hashes against independent MD5/no-qop and RFC 2617 qop known-answer vectors
+- [x] Distinguish socket-write failure from an authenticated DESCRIBE successfully sent to the device
+- [x] Mask RTSP username by default with optional reveal for screenshot privacy
 - [x] Copy safe RTSP diagnostic with no password, username, stream path, Digest realm, nonce or Authorization header
 - [ ] Verify the YGtek RTSP Server 2.0 challenge/response on household hardware with supplied credentials and non-guesswork stream path
 - [ ] ONVIF authenticated stream URI negotiation and playable-stream validation
