@@ -40,6 +40,16 @@ The user-observed ANRAN camera's **platform b81 is not its P2P transport field**
 
 The module intentionally rejects zero-length or excessively large media payloads and never attempts to decrypt data guessed to be plaintext. Payloads only become usable after the future authorized transport layer has reassembled them.
 
+## Authenticated Meari device-list normalization (native Rust, offline)
+
+The new `src/meari_devices.rs` implements an **in-memory, bounded parser** for the camera-list response a future authenticated Meari-family account client may receive. It covers account-owned and shared-home device groups, deduplicates repeated `deviceID` records without cross-merging different devices, and classifies `ipc`, `snap`, and doorbell categories. A successful response marker is required; the `1023` transient code is recognized separately. **A marker in JSON does not authenticate a response by itself**: the future client is responsible for making the authenticated HTTPS request and verifying the server.
+
+It retains session-only fields needed by a future media adapter, including `deviceP2P`, `hostKey`, `p2pInit`, `deviceUUID`, and `snNum`, but these types have no Debug/Serialize capability and are **not saved to the existing registry**. The only public diagnostic is a count of cameras/categories/transport declarations; secrets, addresses, MACs, and device IDs are never included. Strict JSON-size, recursion-depth, and record-count limits prevent unbounded input from an upstream API. A future account integration must define the credential/token lifecycle and avoid diagnostic exposure before this parser is wired to real logins.
+
+Local inventory correlation is **MAC-only**, if the backend actually supplies a syntactically valid MAC. We explicitly refuse identity assertions from IP, hardware chipset, app name or firmware model. A cloud API device list that does not include a MAC is not automatically linked to a LAN device. The known household ANRAN camera still has **unverified Meari backend compatibility**.
+
+This is another protocol milestone, **not** working camera account discovery, live stream authentication, or proof of video access.
+
 ## Open engineering work
 
 1. Validate a **specific** backend/device match for the ANRAN camera without logging into undocumented APIs from an untrusted client. Explicit user consent is required before any future account connection.
