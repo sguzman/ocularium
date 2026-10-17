@@ -91,6 +91,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Document ANRAN/Meari and VicoHome integration evidence, with explicit unverified-device boundary
 - [x] Implement bounded, offline native Meari VVP command encoding / plaintext media framing / replay gating with synthetic tests; no network or credentials
 - [x] Require authoritative device-list transport field before selecting PPCS versus modern signaling (do not infer from platform b81)
+- [x] Offline bounded parsing of successful Meari camera device-list responses (default + shared homes), session-only transport/key data, redacted summaries, MAC-only correlation
+- [ ] Build an opt-in, secure ANRAN account client that can verify an authenticated device list before trying streaming; keep credentials/tokens out of disk and logs
 - [ ] Verify ANRAN's exact account backend and device protocol prior to implementing any app authentication
 - [ ] Add real ANRAN video adapter without mandatory external server; do not infer compatibility from app branding alone
 - [ ] Support VicoHome event media when owner-authorized export/integration is available (not live RTSP)
