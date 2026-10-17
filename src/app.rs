@@ -531,6 +531,9 @@ impl OculariumApp {
             for service in &device.onvif_xaddrs {
                 let _ = writeln!(report, "  ONVIF service: {service}");
             }
+            if let Some(inspection) = self.onvif_results.get(&device.ip) {
+                let _ = writeln!(report, "  {}", inspection.safe_summary().replace('\n', " | "));
+            }
             for info in &device.http {
                 let _ = writeln!(
                     report,
