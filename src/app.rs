@@ -313,7 +313,8 @@ impl OculariumApp {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.snapshot_busy = None;
                     self.snapshot_error = Some((
-                        Ipv4Addr::UNSPECIFIED, 0,
+                        Ipv4Addr::UNSPECIFIED,
+                        0,
                         "Snapshot worker stopped unexpectedly".into(),
                     ));
                 }
@@ -1360,9 +1361,10 @@ impl OculariumApp {
             });
             if let Some((ip, captured_port, path, texture)) = &self.snapshot_texture {
                 if *ip == device.ip && *captured_port == port && *path == self.rtsp_path {
-                    ui.label(RichText::new(
-                        "Decoded RTSP frame (memory only; no recording)"
-                    ).color(HIGHLIGHT));
+                    ui.label(
+                        RichText::new("Decoded RTSP frame (memory only; no recording)")
+                            .color(HIGHLIGHT),
+                    );
                     ui.add(egui::Image::new(texture).max_width(640.0));
                 }
             }
@@ -1475,9 +1477,8 @@ impl eframe::App for OculariumApp {
         self.poll();
         if let Some(result) = self.snapshot_pending.take() {
             if let Some(pixels) = result.pixels {
-                let image = egui::ColorImage::from_rgb(
-                    [snapshot::WIDTH, snapshot::HEIGHT], &pixels,
-                );
+                let image =
+                    egui::ColorImage::from_rgb([snapshot::WIDTH, snapshot::HEIGHT], &pixels);
                 let texture = ctx.load_texture(
                     format!("ocularium-rtsp-{}-{}", result.ip, result.port),
                     image,
@@ -1488,13 +1489,19 @@ impl eframe::App for OculariumApp {
             } else {
                 self.snapshot_texture = None;
                 self.snapshot_error = Some((
-                    result.ip, result.port,
-                    result.error.unwrap_or_else(|| "No frame was decoded".into()),
+                    result.ip,
+                    result.port,
+                    result
+                        .error
+                        .unwrap_or_else(|| "No frame was decoded".into()),
                 ));
             }
         }
-        if self.scanning || self.inspecting.is_some() || self.watch_running
-            || self.snapshot_busy.is_some() {
+        if self.scanning
+            || self.inspecting.is_some()
+            || self.watch_running
+            || self.snapshot_busy.is_some()
+        {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
     }

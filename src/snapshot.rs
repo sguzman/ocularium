@@ -38,20 +38,34 @@ fn ffmpeg_args(uri: &str) -> Vec<String> {
     [
         "-hide_banner",
         "-nostdin",
-        "-loglevel", "error",
-        "-rtsp_transport", "tcp",
-        "-rw_timeout", "3000000",
-        "-i", uri,
-        "-map", "0:v:0",
-        "-an", "-sn", "-dn",
-        "-frames:v", "1",
-        "-threads", "1",
+        "-loglevel",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-rw_timeout",
+        "3000000",
+        "-i",
+        uri,
+        "-map",
+        "0:v:0",
+        "-an",
+        "-sn",
+        "-dn",
+        "-frames:v",
+        "1",
+        "-threads",
+        "1",
         "-vf",
         "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2",
-        "-pix_fmt", "rgb24",
-        "-f", "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-f",
+        "rawvideo",
         "pipe:1",
-    ].iter().map(|item| (*item).to_owned()).collect()
+    ]
+    .iter()
+    .map(|item| (*item).to_owned())
+    .collect()
 }
 
 fn checked_pixels(data: Vec<u8>) -> Result<Vec<u8>, String> {
@@ -69,7 +83,11 @@ fn checked_pixels(data: Vec<u8>) -> Result<Vec<u8>, String> {
 /// RTSP endpoint. Runs in a worker so the UI never waits for FFmpeg.
 pub fn capture(ip: Ipv4Addr, port: u16, path: String) -> SnapshotResult {
     let mut result = SnapshotResult {
-        ip, port, path: path.clone(), pixels: None, error: None,
+        ip,
+        port,
+        path: path.clone(),
+        pixels: None,
+        error: None,
     };
     let uri = match validate(ip, port, &path) {
         Ok(value) => value,
@@ -105,7 +123,9 @@ pub fn capture(ip: Ipv4Addr, port: u16, path: String) -> SnapshotResult {
     // full OS pipe while we enforce the independent process deadline.
     let reader = thread::spawn(move || {
         let mut bytes = Vec::with_capacity(PIXEL_BYTES);
-        let _ = stdout.take((PIXEL_BYTES + 1) as u64).read_to_end(&mut bytes);
+        let _ = stdout
+            .take((PIXEL_BYTES + 1) as u64)
+            .read_to_end(&mut bytes);
         bytes
     });
     let began = Instant::now();
@@ -148,7 +168,10 @@ mod tests {
     #[test]
     fn accepts_only_explicit_local_rtsp_paths() {
         let ip = Ipv4Addr::new(192, 168, 0, 100);
-        assert_eq!(validate(ip, 8554, "/live").unwrap(), "rtsp://192.168.0.100:8554/live");
+        assert_eq!(
+            validate(ip, 8554, "/live").unwrap(),
+            "rtsp://192.168.0.100:8554/live"
+        );
         assert!(validate(ip, 8554, "rtsp://example.com/live").is_err());
         assert!(validate(ip, 8554, "/camera@evil.test").is_err());
         assert!(validate(Ipv4Addr::new(8, 8, 8, 8), 8554, "/").is_err());
@@ -162,6 +185,8 @@ mod tests {
         let args = ffmpeg_args("rtsp://192.168.0.100:8554/live");
         assert!(args.iter().any(|a| a == "-rtsp_transport"));
         assert!(args.iter().any(|a| a == "-frames:v"));
-        assert!(!args.iter().any(|a| a.contains("password") || a.contains("user:pass")));
+        assert!(!args
+            .iter()
+            .any(|a| a.contains("password") || a.contains("user:pass")));
     }
 }
