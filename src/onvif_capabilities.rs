@@ -133,7 +133,8 @@ fn read_response(stream: &mut TcpStream) -> Result<(u16, String), String> {
         if bytes.len() >= MAX_REPLY {
             return Err("HTTP response exceeded 64 KiB".into());
         }
-        match stream.read(&mut buffer[..buffer.len().min(MAX_REPLY - bytes.len())]) {
+        let limit = buffer.len().min(MAX_REPLY - bytes.len());
+        match stream.read(&mut buffer[..limit]) {
             Ok(0) => return Err("Incomplete HTTP response".into()),
             Ok(n) => bytes.extend_from_slice(&buffer[..n]),
             Err(error) => return Err(format!("Reading ONVIF reply: {error}")),
