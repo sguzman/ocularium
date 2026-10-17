@@ -7,7 +7,7 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use eframe::egui::{self, Color32, RichText};
@@ -19,6 +19,7 @@ use crate::{
     dns,
     history::{self, HistoryStore},
     neighbor_watch::NeighborWatch,
+    neighbor_history::NeighborArchive,
     registry::Registry,
     rtsp::{self, RtspInspection},
 };
@@ -37,6 +38,10 @@ pub struct OculariumApp {
     deep_scanning: bool,
     watch: Option<NeighborWatch>,
     watch_running: bool,
+    remember_neighbors: bool,
+    neighbor_archive: NeighborArchive,
+    last_neighbor_flush: Option<Instant>,
+    neighbor_archive_status: Option<String>,
     deep_report: Option<DeepReport>,
     completed: usize,
     total: usize,
@@ -79,6 +84,10 @@ impl OculariumApp {
         if let Some(warning) = dhcp_warning {
             messages.push(warning);
         }
+        let (neighbor_archive, archive_warning) = NeighborArchive::load();
+        if let Some(warning) = archive_warning {
+            messages.push(warning);
+        }
         Self {
             scopes,
             selected_scope: 0,
@@ -90,6 +99,10 @@ impl OculariumApp {
             deep_scanning: false,
             watch: None,
             watch_running: false,
+            remember_neighbors: false,
+            neighbor_archive,
+            last_neighbor_flush: None,
+            neighbor_archive_status: None,
             deep_report: None,
             completed: 0,
             total: 253,
@@ -169,9 +182,35 @@ impl OculariumApp {
         self.cancelled = Some(cancelled);
     }
 
+    fn persist_neighbor_observations(&mut self) {
+        if !self.remember_neighbors {
+            return;
+        }
+        let Some(watch) = &self.watch else {
+            return;
+        };
+        if watch.sample_count == 0 {
+            return;
+        }
+        match self.neighbor_archive.record(watch) {
+            Ok(()) => self.neighbor_archive_status = Some(format!(
+                "Saved {} MAC identities from this observation session",
+                watch.by_mac.len(),
+            )),
+            Err(error) => self.neighbor_archive_status = Some(error),
+        }
+        self.last_neighbor_flush = Some(Instant::now());
+    }
+
     fn poll(&mut self) {
         if let Some(watch) = &mut self.watch {
             watch.poll();
+        }
+        if self.watch_running && self.remember_neighbors
+            && self.watch.as_ref().is_some_and(|watch| watch.sample_count > 0)
+            && self.last_neighbor_flush.is_none_or(|last| last.elapsed() >= Duration::from_secs(60))
+        {
+            self.persist_neighbor_observations();
         }
         let mut disconnected = false;
         if let Some(rx) = &self.receiver {
