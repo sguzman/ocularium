@@ -326,6 +326,24 @@ impl OculariumApp {
         if let Some(deep) = &self.deep_report {
             let _ = writeln!(report, "{}", deep.summary());
         }
+        if let Some(scope) = self.scopes.get(self.selected_scope) {
+            let records = self.neighbor_archive.records(scope);
+            let _ = writeln!(
+                report,
+                "Saved opt-in passive neighbor observations: {} MAC identities (historical, not online status)",
+                records.len(),
+            );
+            for record in records {
+                let _ = writeln!(
+                    report,
+                    "  MAC {} · IPs {:?} · first {} · last {} · {} sessions · {} sampled cache sightings",
+                    record.mac, record.ips,
+                    history::display_time(record.first_seen),
+                    history::display_time(record.last_seen),
+                    record.sessions, record.sampled_sightings,
+                );
+            }
+        }
         if let Some(watch) = &self.watch {
             let _ = writeln!(
                 report,
@@ -972,6 +990,58 @@ impl OculariumApp {
         });
     }
 
+    fn neighbor_archive_panel(&self, ui: &mut egui::Ui) {
+        let Some(scope) = self.scopes.get(self.selected_scope) else {
+            return;
+        };
+        let entries = self.neighbor_archive.records(scope);
+        if entries.is_empty() {
+            return;
+        }
+        ui.separator();
+        ui.collapsing(format!(
+            "Saved passive neighbor history ({} MAC identities)",
+            entries.len(),
+        ), |ui| {
+            ui.label(
+                RichText::new(
+                    "Historical kernel-cache observations, saved only after opt-in. A missing cache entry is not proof the device is offline. A randomized MAC cannot reliably be linked to another identity."
+                ).color(MUTED).small()
+            );
+            egui::ScrollArea::vertical()
+                .id_salt("saved_neighbor_macs")
+                .max_height(235.0)
+                .show(ui, |ui| {
+                    for row in entries {
+                        let dhcp_name = self.dhcp.snapshot(scope)
+                            .and_then(|snapshot| snapshot.clients.iter()
+                                .find(|lease| lease.mac.eq_ignore_ascii_case(&row.mac)))
+                            .and_then(|client| client.name.as_deref())
+                            .unwrap_or("-");
+                        ui.label(format!(
+                            "{} · {} · {} sessions · IPs {:?} · last {}",
+                            row.mac, dhcp_name, row.sessions, row.ips,
+                            history::display_time(row.last_seen),
+                        ));
+                    }
+                });
+            let events = self.neighbor_archive.events(scope);
+            ui.collapsing(format!("Saved cache events (last {})", events.len()), |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("saved_neighbor_events")
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        for change in events {
+                            ui.label(format!(
+                                "{} · {}",
+                                history::display_time(change.at), change.detail,
+                            ));
+                        }
+                    });
+            });
+        });
+    }
+
     fn history_panel(&self, ui: &mut egui::Ui) {
         let Some(scope) = self.scopes.get(self.selected_scope) else {
             return;
@@ -1304,6 +1374,15 @@ impl OculariumApp {
     }
 }
 
+impl Drop for OculariumApp {
+    fn drop(&mut self) {
+        if let Some(watch) = &self.watch {
+            watch.stop();
+        }
+        self.persist_neighbor_observations();
+    }
+}
+
 impl eframe::App for OculariumApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
@@ -1331,6 +1410,7 @@ impl eframe::App for OculariumApp {
                 self.devices_panel(ui);
                 self.details_panel(ui);
                 self.neighbor_panel(ui);
+                self.neighbor_archive_panel(ui);
                 self.dhcp_panel(ui);
                 self.history_panel(ui);
                 ui.add_space(12.0);
