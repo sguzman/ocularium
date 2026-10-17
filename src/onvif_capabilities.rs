@@ -314,7 +314,11 @@ mod tests {
         // Exercise the complete HTTP parser using a loopback fixture while
         // preserving the private-LAN restriction on actual probe actions.
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
-        stream.write_all(b"test fixture").unwrap();
+        let request = format!(
+            "POST /onvif/device_service HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+            SOAP.len(), SOAP
+        );
+        stream.write_all(request.as_bytes()).unwrap();
         let (status, body) = read_response(&mut stream).unwrap();
         server.join().unwrap();
         assert_eq!(status, 200);
