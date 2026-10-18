@@ -251,9 +251,7 @@ impl AuthorizedCatalog {
             };
             let valid_host_key = match camera.host_key.as_deref() {
                 Some(host_key) => {
-                    let ok = !host_key.is_empty()
-                        && host_key.len() <= 256
-                        && host_key.is_ascii();
+                    let ok = !host_key.is_empty() && host_key.len() <= 256 && host_key.is_ascii();
                     if !ok {
                         out.host_key_invalid += 1;
                     }
@@ -594,7 +592,14 @@ mod tests {
         );
         let safe = status.safe_text();
         assert!(safe.contains("7 declared"));
-        for forbidden in [uuid, init, "sample-key", "private-host-key", "fake-uuid", "clé-privée"] {
+        for forbidden in [
+            uuid,
+            init,
+            "sample-key",
+            "private-host-key",
+            "fake-uuid",
+            "clé-privée",
+        ] {
             assert!(!safe.contains(forbidden));
         }
     }
@@ -609,9 +614,11 @@ mod tests {
                  "deviceUUID": "01-BCDEF-23B", "hostKey": "private"}
             ]}
         });
-        let catalog =
-            parse_authenticated_device_list(response.to_string().as_bytes()).unwrap();
-        assert_eq!(catalog.ppcs_metadata_summary(), PpcsMetadataSummary::default());
+        let catalog = parse_authenticated_device_list(response.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            catalog.ppcs_metadata_summary(),
+            PpcsMetadataSummary::default()
+        );
     }
 
     #[test]
