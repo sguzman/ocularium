@@ -104,7 +104,7 @@ impl PpcsReliableReceiver {
         outer_type: u8,
         data: &[u8],
     ) -> Result<ChannelDelivery, PpcsError> {
-        if outer_type != 0xd0 || data.len() < 5 || data[0] != 0xd1 {
+        if outer_type != 0xd0 || data.len() < 4 || data[0] != 0xd1 {
             return Err(PpcsError::InvalidPacket);
         }
         let channel = data[1];
