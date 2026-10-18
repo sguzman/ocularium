@@ -13,7 +13,7 @@ use crate::{
     meari_account::{
         self, AuthError, Credentials, DiscoveryCoverage, DiscoveryOptions, PlatformSummary,
     },
-    meari_devices::{CatalogCorrelation, CatalogSummary},
+    meari_devices::{CatalogCorrelation, CatalogSummary, PpcsMetadataSummary},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,6 +61,7 @@ impl PairedApp {
 struct DiscoveryReport {
     catalog: CatalogSummary,
     correlation: CatalogCorrelation,
+    ppcs_metadata: PpcsMetadataSummary,
     coverage: DiscoveryCoverage,
     platform: PlatformSummary,
 }
@@ -200,6 +201,7 @@ impl AnranPanel {
             .map(|discovery| DiscoveryReport {
                 catalog: discovery.summary(),
                 correlation: discovery.correlate_saved_macs(&saved_macs),
+                ppcs_metadata: discovery.ppcs_metadata_summary(),
                 coverage: discovery.coverage,
                 platform: discovery.platform,
             });
@@ -343,9 +345,13 @@ impl AnranPanel {
                             ui.label(report.platform.safe_text());
                             ui.label(report.coverage.safe_text());
                             ui.label(report.catalog.safe_text());
+                            ui.label(report.ppcs_metadata.safe_text());
                             ui.label(report.correlation.safe_text());
                             ui.small(
                                 "No match is inconclusive: vendor lists often omit MACs,                                  and saved cameras may have a different app label.",
+                            );
+                            ui.label(
+                                "PPCS metadata counts show format prerequisites only. They do not                                  verify connectivity, peer identity or authorization to stream.",
                             );
                             ui.label(
                                 "Device IDs, keys and access tokens were not retained in the UI.",

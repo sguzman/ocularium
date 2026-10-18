@@ -226,6 +226,10 @@ impl AccountDiscovery {
     ) -> meari_devices::CatalogCorrelation {
         self.catalog.correlate_saved_macs(saved)
     }
+
+    pub fn ppcs_metadata_summary(&self) -> meari_devices::PpcsMetadataSummary {
+        self.catalog.ppcs_metadata_summary()
+    }
 }
 
 /// Optional account configuration inspection. Only fixed, non-secret

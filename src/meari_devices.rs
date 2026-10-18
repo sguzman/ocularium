@@ -4,7 +4,10 @@
 //! github.com/raulrojas22/Ha-CloudPlus-Meari-ANRAN
 //! custom_components/cloudplus/api.py, _collect_devices_from_payload.
 
-use crate::meari_vvp::Transport;
+use crate::{
+    meari_ppcs_discovery::{PpcsDeviceIdentity, PpcsDeviceInit},
+    meari_vvp::Transport,
+};
 use std::collections::BTreeMap;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -87,6 +90,38 @@ impl CatalogSummary {
             "Authorized catalog (memory only): {} cameras, wired={}, battery={}, doorbells={}, PPCS={}, signaling={}, unknown transport={}. No video verified.",
             self.cameras, self.wired, self.battery, self.doorbells,
             self.ppcs, self.signaling, self.transport_unverified
+        )
+    }
+}
+
+/// PPCS account-record *format* preflight. A complete row is not
+/// authenticated peer access, a working socket, or verified video.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PpcsMetadataSummary {
+    pub declared: usize,
+    pub fields_valid: usize,
+    pub identity_missing: usize,
+    pub identity_invalid: usize,
+    pub init_missing: usize,
+    pub init_invalid: usize,
+    pub host_key_missing: usize,
+    pub host_key_invalid: usize,
+}
+
+impl PpcsMetadataSummary {
+    /// Fixed text contains only counts; cannot leak device IDs, host keys,
+    /// init strings, relay hosts, or vendor account material.
+    pub fn safe_text(self) -> String {
+        format!(
+            "PPCS account metadata (format only): {} declared, {} with all required fields              syntactically valid; identity missing={}, malformed={};              init missing={}, malformed={}; host key missing={}, malformed={}.              Does not establish peer identity, reachable transport or video access.",
+            self.declared,
+            self.fields_valid,
+            self.identity_missing,
+            self.identity_invalid,
+            self.init_missing,
+            self.init_invalid,
+            self.host_key_missing,
+            self.host_key_invalid,
         )
     }
 }
@@ -176,6 +211,64 @@ impl AuthorizedCatalog {
             }
         }
         comparison
+    }
+
+    /// Count which explicitly PPCS-marked catalog records contain parseable
+    /// protocol prerequisites. Never attempt DNS, P2P, or key derivation from
+    /// unmarked/signaling cameras. Temporary decoded secrets are destroyed.
+    pub fn ppcs_metadata_summary(&self) -> PpcsMetadataSummary {
+        let mut out = PpcsMetadataSummary::default();
+        for camera in &self.records {
+            if camera.transport != Transport::Ppcs {
+                continue;
+            }
+            out.declared += 1;
+            let valid_identity = match camera.device_uuid.as_deref() {
+                Some(uuid) => {
+                    let ok = PpcsDeviceIdentity::from_factory_uuid(uuid).is_ok();
+                    if !ok {
+                        out.identity_invalid += 1;
+                    }
+                    ok
+                }
+                None => {
+                    out.identity_missing += 1;
+                    false
+                }
+            };
+            let valid_init = match camera.p2p_init.as_deref() {
+                Some(init) => {
+                    let ok = PpcsDeviceInit::from_device_init(init).is_ok();
+                    if !ok {
+                        out.init_invalid += 1;
+                    }
+                    ok
+                }
+                None => {
+                    out.init_missing += 1;
+                    false
+                }
+            };
+            let valid_host_key = match camera.host_key.as_deref() {
+                Some(host_key) => {
+                    let ok = !host_key.is_empty()
+                        && host_key.len() <= 256
+                        && host_key.is_ascii();
+                    if !ok {
+                        out.host_key_invalid += 1;
+                    }
+                    ok
+                }
+                None => {
+                    out.host_key_missing += 1;
+                    false
+                }
+            };
+            if valid_identity && valid_init && valid_host_key {
+                out.fields_valid += 1;
+            }
+        }
+        out
     }
 
     /// Merge separate owner and shared-home responses using authoritative
@@ -439,6 +532,110 @@ mod tests {
         ] {
             assert!(!report.contains(secret));
         }
+    }
+
+    #[test]
+    fn ppcs_metadata_reports_only_validated_field_counts_without_secrets() {
+        let uuid = "01-BCDEF-23B";
+        let init = "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
+        let entries = vec![
+            serde_json::json!({
+                "deviceID": "complete-private", "snNum": "secret-a",
+                "deviceP2P": "ppcs", "deviceUUID": uuid, "p2pInit": init,
+                "hostKey": "private-host-key"
+            }),
+            serde_json::json!({
+                "deviceID": "missing-id", "snNum": "secret-b", "deviceP2P": "ppcs",
+                "p2pInit": init, "hostKey": "private-host-key"
+            }),
+            serde_json::json!({
+                "deviceID": "bad-id", "snNum": "secret-c", "deviceP2P": "ppcs",
+                "deviceUUID": "fake-uuid", "p2pInit": init, "hostKey": "private-host-key"
+            }),
+            serde_json::json!({
+                "deviceID": "missing-init", "snNum": "secret-d", "deviceP2P": "ppcs",
+                "deviceUUID": uuid, "hostKey": "private-host-key"
+            }),
+            serde_json::json!({
+                "deviceID": "bad-init", "snNum": "secret-e", "deviceP2P": "ppcs",
+                "deviceUUID": uuid, "p2pInit": "garbage", "hostKey": "private-host-key"
+            }),
+            serde_json::json!({
+                "deviceID": "missing-key", "snNum": "secret-f", "deviceP2P": "ppcs",
+                "deviceUUID": uuid, "p2pInit": init
+            }),
+            serde_json::json!({
+                "deviceID": "bad-key", "snNum": "secret-g", "deviceP2P": "ppcs",
+                "deviceUUID": uuid, "p2pInit": init, "hostKey": "clé-privée"
+            }),
+            serde_json::json!({
+                "deviceID": "other-protocol", "snNum": "secret-h",
+                "deviceP2P": "webrtc", "deviceUUID": uuid,
+                "p2pInit": init, "hostKey": "private-host-key"
+            }),
+        ];
+        let json = serde_json::json!({
+            "resultCode": "1001", "result": {"ipc": entries}
+        });
+        let catalog = parse_authenticated_device_list(json.to_string().as_bytes()).unwrap();
+        let status = catalog.ppcs_metadata_summary();
+        assert_eq!(
+            status,
+            PpcsMetadataSummary {
+                declared: 7,
+                fields_valid: 1,
+                identity_missing: 1,
+                identity_invalid: 1,
+                init_missing: 1,
+                init_invalid: 1,
+                host_key_missing: 1,
+                host_key_invalid: 1,
+            }
+        );
+        let safe = status.safe_text();
+        assert!(safe.contains("7 declared"));
+        for forbidden in [uuid, init, "sample-key", "private-host-key", "fake-uuid", "clé-privée"] {
+            assert!(!safe.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn ppcs_metadata_never_inferrs_transport_from_other_camera_fields() {
+        let response = serde_json::json!({
+            "resultCode": "1001", "result": {"ipc": [
+                {"deviceID": "a", "snNum": "serial", "model": "b81",
+                 "deviceUUID": "01-BCDEF-23B", "hostKey": "private"},
+                {"deviceID": "b", "snNum": "serial", "deviceP2P": "webrtc",
+                 "deviceUUID": "01-BCDEF-23B", "hostKey": "private"}
+            ]}
+        });
+        let catalog =
+            parse_authenticated_device_list(response.to_string().as_bytes()).unwrap();
+        assert_eq!(catalog.ppcs_metadata_summary(), PpcsMetadataSummary::default());
+    }
+
+    #[test]
+    fn ppcs_metadata_merges_richer_shared_home_fields_without_network() {
+        let mut owner = parse_authenticated_device_list(
+            br#"{"resultCode":"1001","result":{"ipc":[
+                {"deviceID":"a","snNum":"serial","deviceP2P":"ppcs"}
+            ]}}"#,
+        )
+        .unwrap();
+        let shared = serde_json::json!({
+            "resultCode": "1001", "result": {"deviceList": [{
+                "deviceID": "a", "snNum": "serial",
+                "deviceP2P": "ppcs", "deviceUUID": "01-BCDEF-23B",
+                "p2pInit": "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key",
+                "hostKey": "private"
+            }]}
+        });
+        owner
+            .merge(parse_authenticated_device_list(shared.to_string().as_bytes()).unwrap())
+            .unwrap();
+        let result = owner.ppcs_metadata_summary();
+        assert_eq!(result.declared, 1);
+        assert_eq!(result.fields_valid, 1);
     }
 
     #[test]
