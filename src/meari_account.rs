@@ -520,12 +520,17 @@ fn parse_home_ids(bytes: &[u8]) -> Result<HomeIds, AuthError> {
         let raw = Zeroizing::new(raw);
         if raw.is_empty()
             || raw.len() > 64
-            || !raw.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || !raw
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         {
             truncated = true;
             continue;
         }
-        if ids.iter().any(|id: &Zeroizing<String>| id.as_str() == raw.as_str()) {
+        if ids
+            .iter()
+            .any(|id: &Zeroizing<String>| id.as_str() == raw.as_str())
+        {
             continue;
         }
         if ids.len() >= MAX_SHARED_HOMES {
@@ -609,11 +614,7 @@ pub fn discover_account<T: Exchange, C: Clock>(
     )?;
     // A shared-only account can have no default camera list. Preserve a
     // partial result instead of pretending the default list succeeded.
-    if let Ok(raw) = transport.exchange(device_request(
-        &credentials,
-        &session,
-        clock.next(),
-    )?) {
+    if let Ok(raw) = transport.exchange(device_request(&credentials, &session, clock.next())?) {
         let raw = Zeroizing::new(raw);
         if let Ok(default_catalog) = meari_devices::parse_authenticated_device_list(&raw) {
             coverage.default_list_ok = true;
@@ -854,7 +855,10 @@ mod tests {
                 homes_truncated: false,
             }
         );
-        assert!(discovered.coverage.safe_text().contains("complete request sequence"));
+        assert!(discovered
+            .coverage
+            .safe_text()
+            .contains("complete request sequence"));
         let safe = discovered.coverage.safe_text();
         assert!(!safe.contains("test-home-1"));
         assert!(!safe.contains("private"));
@@ -873,7 +877,10 @@ mod tests {
         assert_eq!(discovered.summary().cameras, 2);
         assert!(!discovered.coverage.default_list_ok);
         assert_eq!(discovered.coverage.homes_succeeded, 2);
-        assert!(discovered.coverage.safe_text().contains("partial / unverified"));
+        assert!(discovered
+            .coverage
+            .safe_text()
+            .contains("partial / unverified"));
     }
 
     #[test]
@@ -889,7 +896,10 @@ mod tests {
         assert_eq!(discovered.summary().cameras, 1);
         assert_eq!(discovered.coverage.homes_attempted, 2);
         assert_eq!(discovered.coverage.homes_succeeded, 1);
-        assert!(discovered.coverage.safe_text().contains("partial / unverified"));
+        assert!(discovered
+            .coverage
+            .safe_text()
+            .contains("partial / unverified"));
     }
 
     #[test]

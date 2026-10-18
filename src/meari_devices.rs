@@ -189,7 +189,9 @@ impl AuthorizedCatalog {
         for camera in other.records {
             let replace = by_id
                 .get(&camera.device_id)
-                .is_none_or(|prior: &AuthorizedCamera| camera.completeness() > prior.completeness());
+                .is_none_or(|prior: &AuthorizedCamera| {
+                    camera.completeness() > prior.completeness()
+                });
             if replace {
                 by_id.insert(camera.device_id.clone(), camera);
             }
