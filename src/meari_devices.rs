@@ -265,12 +265,7 @@ impl AuthorizedCatalog {
     pub fn matched_ppcs_summary(&self, saved: &[Option<String>]) -> MatchedPpcsSummary {
         let local: Vec<Option<Zeroizing<String>>> = saved
             .iter()
-            .map(|entry| {
-                entry
-                    .as_deref()
-                    .and_then(normalize_mac)
-                    .map(Zeroizing::new)
-            })
+            .map(|entry| entry.as_deref().and_then(normalize_mac).map(Zeroizing::new))
             .collect();
         let mut summary = MatchedPpcsSummary::default();
         for (index, mac) in local.iter().enumerate() {
@@ -292,9 +287,10 @@ impl AuthorizedCatalog {
             if saved_count != 1 {
                 continue;
             }
-            let mut cloud = self.records.iter().filter(|camera| {
-                camera.mac.as_deref() == Some(mac.as_str())
-            });
+            let mut cloud = self
+                .records
+                .iter()
+                .filter(|camera| camera.mac.as_deref() == Some(mac.as_str()));
             let Some(camera) = cloud.next() else {
                 continue;
             };

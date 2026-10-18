@@ -13,9 +13,7 @@ use crate::{
     meari_account::{
         self, AuthError, Credentials, DiscoveryCoverage, DiscoveryOptions, PlatformSummary,
     },
-    meari_devices::{
-        CatalogCorrelation, CatalogSummary, MatchedPpcsSummary, PpcsMetadataSummary,
-    },
+    meari_devices::{CatalogCorrelation, CatalogSummary, MatchedPpcsSummary, PpcsMetadataSummary},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
