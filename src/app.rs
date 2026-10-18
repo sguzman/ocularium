@@ -926,6 +926,10 @@ impl OculariumApp {
             ).color(MUTED).small());
             if saved.is_empty() {
                 ui.label("No saved camera records yet. Select a discovered device and save its camera identity or model.");
+            } else if saved.iter().any(|profile| profile.app == CameraApp::Unknown) {
+                ui.small(
+                    "A saved model or IP does not identify its phone app.                      Review the record and set Camera role and Managed by explicitly                      before trying to match it with an ANRAN account.",
+                );
             }
             for profile in saved {
                 let discovered = self.devices.values()
@@ -942,7 +946,14 @@ impl OculariumApp {
                     |device| self.local_video_evidence(device)
                 );
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Edit saved").clicked() {
+                    if ui
+                        .button(if profile.app == CameraApp::Unknown {
+                            "Review saved identity"
+                        } else {
+                            "Edit saved"
+                        })
+                        .clicked()
+                    {
                         self.select_saved_camera(&profile);
                     }
                     ui.label(RichText::new(label).strong());
@@ -2164,7 +2175,22 @@ impl eframe::App for OculariumApp {
                     .get(self.selected_scope)
                     .map(|scope| self.registry.anran_mac_snapshot(scope))
                     .unwrap_or_default();
-                self.anran.ui(ui, &saved_anran_macs);
+                let review_candidate = self
+                    .scopes
+                    .get(self.selected_scope)
+                    .and_then(|scope| self.registry.single_unknown_app_profile_for_scope(scope))
+                    .cloned();
+                let review_requested =
+                    self.anran
+                        .ui(ui, &saved_anran_macs, review_candidate.is_some());
+                if review_requested {
+                    if let Some(profile) = review_candidate.as_ref() {
+                        self.select_saved_camera(profile);
+                    }
+                }
+                if review_requested {
+                    ui.scroll_to_cursor(Some(egui::Align::Center));
+                }
                 self.saved_camera_editor(ui);
                 self.devices_panel(ui);
                 self.details_panel(ui);

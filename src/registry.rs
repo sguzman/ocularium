@@ -179,6 +179,22 @@ impl Registry {
         rows
     }
 
+    /// Surface one existing, not-yet-associated saved record for manual
+    /// editing from the ANRAN panel. Never assign the camera role or app
+    /// automatically: a model and local IP are not account identity proof.
+    /// Fail closed when several saved records could be meant.
+    pub fn single_unknown_app_profile_for_scope(&self, scope: &Scope) -> Option<&CameraProfile> {
+        let mut profiles = self.camera_profiles_for_scope(scope).into_iter();
+        let profile = profiles.next()?;
+        if profiles.next().is_some()
+            || profile.app != CameraApp::Unknown
+            || profile.role == CameraRole::NotCamera
+        {
+            return None;
+        }
+        Some(profile)
+    }
+
     /// Ephemeral local-only MAC snapshot for a one-shot ANRAN account test.
     /// Only user-identified ANRAN profiles on the selected LAN are included.
     /// Never infer membership from a model, IP, or a different app label.
@@ -334,6 +350,54 @@ mod tests {
         );
         assert!(registry.camera_profile(&b, &moved).is_none());
         assert_eq!(registry.camera_profiles_for_scope(&a).len(), 1);
+    }
+
+    #[test]
+    fn offline_anran_review_shortcut_only_targets_one_unassigned_saved_record() {
+        let a = scope([192, 168, 0]);
+        let b = scope([192, 168, 1]);
+        let mut registry = Registry::default();
+        let mut p = CameraProfile {
+            scope: history::scope_id(&a),
+            identity: "saved-cq1f".into(),
+            last_ip: Ipv4Addr::new(192, 168, 0, 105),
+            mac: None,
+            role: CameraRole::Unreviewed,
+            app: CameraApp::Unknown,
+            metadata: CameraMetadata {
+                model: "CQ1F".into(),
+                ..Default::default()
+            },
+        };
+        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        assert_eq!(
+            registry
+                .single_unknown_app_profile_for_scope(&a)
+                .unwrap()
+                .metadata
+                .model,
+            "CQ1F"
+        );
+        assert!(registry.single_unknown_app_profile_for_scope(&b).is_none());
+
+        p.app = CameraApp::VicoHome;
+        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
+
+        p.app = CameraApp::Unknown;
+        p.role = CameraRole::NotCamera;
+        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
+
+        p.role = CameraRole::Unreviewed;
+        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        let mut another = p.clone();
+        another.identity = "second-record".into();
+        another.last_ip = Ipv4Addr::new(192, 168, 0, 106);
+        registry.camera_profiles.insert(another.identity.clone(), another);
+        assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
+        // The shortcut never mutates the user registry.
+        assert_eq!(registry.camera_profiles_for_scope(&a).len(), 2);
     }
 
     #[test]

@@ -220,7 +220,15 @@ impl AnranPanel {
         });
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui, saved_macs: &[Option<String>]) {
+    /// True only when the user explicitly requests an offline review of
+    /// one saved record. Caller opens its editor; no registry change here.
+    pub fn ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        saved_macs: &[Option<String>],
+        can_review_saved: bool,
+    ) -> bool {
+        let mut review_saved_requested = false;
         egui::CollapsingHeader::new("ANRAN account discovery (experimental)")
             .default_open(false)
             .show(ui, |ui| {
@@ -273,9 +281,24 @@ impl AnranPanel {
                 }
                 ui.separator();
                 ui.small(format!(
-                    "Saved ANRAN records in the selected LAN scope: {}.                      MAC correlation is local-only and cannot prove video access.",
+                    "Saved cameras identified as ANRAN on this LAN: {}.                      Account lookup does not depend on this count; local MAC comparison does.",
                     saved_macs.len()
                 ));
+                if saved_macs.is_empty() {
+                    ui.label(
+                        "No saved camera is labeled as ANRAN for this network.                          This does not mean the camera is offline or that the account login failed.",
+                    );
+                    if can_review_saved
+                        && ui
+                            .button("Review saved camera identity (offline)")
+                            .on_hover_text(
+                                "Opens the saved camera editor below. Nothing is                                  reclassified or sent to the network automatically.",
+                            )
+                            .clicked()
+                    {
+                        review_saved_requested = true;
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("Country");
                     ui.add_enabled(
@@ -371,6 +394,7 @@ impl AnranPanel {
                     }
                 }
             });
+        review_saved_requested
     }
 }
 

@@ -30,6 +30,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Camera inventory, table filters, and safe reports include explicit user provenance without claiming playable video
 - [x] Browse all explicitly saved camera records (including not-reviewed, model-only entries) before any network scan
 - [x] Reopen and edit saved camera identity, app and metadata offline, without contaminating live discovery or status
+- [x] Add ANRAN panel shortcut to the **sole** saved, unassigned-app record's offline identity editor, with accurate zero-matching explanation; no automatic camera role/app assignment and no network activity
 - [x] Prefer available network scope with saved camera profiles on app startup; preserve missing-device warnings
 - [x] Regression-test saved model-only profile round trip and identity reconstruction without network evidence
 - [x] Optional user-entered private camera hardware metadata (model, firmware, platform, serial/device ID), backward-compatible registry
