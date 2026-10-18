@@ -226,10 +226,14 @@ mod tests {
         let second = cipher.encode(0xd0, &[0xd1, 1, 0, 1, b'b']).unwrap();
         let first = cipher.encode(0xd0, &[0xd1, 1, 0, 0, b'a']).unwrap();
         let late = cipher.decode_obfuscated(second.as_bytes()).unwrap();
-        let d = receiver.accept_plaintext_data(late.kind(), late.payload()).unwrap();
+        let d = receiver
+            .accept_plaintext_data(late.kind(), late.payload())
+            .unwrap();
         assert!(d.chunks.is_empty());
         let early = cipher.decode_obfuscated(first.as_bytes()).unwrap();
-        let d = receiver.accept_plaintext_data(early.kind(), early.payload()).unwrap();
+        let d = receiver
+            .accept_plaintext_data(early.kind(), early.payload())
+            .unwrap();
         assert_eq!(d.chunks, [b"a".to_vec(), b"b".to_vec()]);
     }
 
