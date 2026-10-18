@@ -15,9 +15,7 @@ use std::{
 
 use zeroize::{Zeroize, Zeroizing};
 
-use crate::meari_ppcs_probe::{
-    DatagramIo, PpcsOneShotProbe, ProbeEvent, ProbeState,
-};
+use crate::meari_ppcs_probe::{DatagramIo, PpcsOneShotProbe, ProbeEvent, ProbeState};
 
 const MAX_DATAGRAM: usize = 16 * 1024 + 4;
 const POLL_TIMEOUT: Duration = Duration::from_millis(75);
@@ -180,12 +178,7 @@ impl PpcsUdpSocket {
                     return Err(UdpProbeError::SocketFailure);
                 }
             };
-            match probe.receive(
-                self,
-                received.sender(),
-                received.bytes(),
-                Instant::now(),
-            ) {
+            match probe.receive(self, received.sender(), received.bytes(), Instant::now()) {
                 Ok(ProbeEvent::UnverifiedCandidate) => {
                     break UdpProbeResult::UnverifiedCandidate;
                 }
@@ -240,8 +233,7 @@ mod tests {
         meari_vvp::Transport,
     };
 
-    const INIT: &str =
-        "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
+    const INIT: &str = "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
     const UUID: &str = "01-BCDEF-23B";
 
     fn loopback() -> SocketAddrV4 {
@@ -283,7 +275,9 @@ mod tests {
         let cipher = PpcsPacketCipher::from_session_key(b"fictional-key").unwrap();
         let sample = cipher.encode(0x41, b"fictional-payload").unwrap();
         assert_eq!(
-            sender.send_to(sample.as_bytes(), receiver.local_addr()).unwrap(),
+            sender
+                .send_to(sample.as_bytes(), receiver.local_addr())
+                .unwrap(),
             sample.as_bytes().len()
         );
         let packet = receiver.receive_once().unwrap().unwrap();
