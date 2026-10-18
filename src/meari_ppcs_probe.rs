@@ -407,7 +407,7 @@ mod tests {
             .decode_obfuscated(&io.sent[0].1)
             .unwrap();
         assert_eq!(hello.kind(), 0x00);
-        assert_eq!(hello.payload(), []);
+        assert!(hello.payload().is_empty());
         let request = cipher
             .packet_cipher()
             .decode_obfuscated(&io.sent[1].1)
