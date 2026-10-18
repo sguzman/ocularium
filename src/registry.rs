@@ -357,10 +357,25 @@ mod tests {
                 },
             );
         };
-        record(10, CameraApp::Anran, CameraRole::Unreviewed, Some("02:ab:cd:12:34:56"));
+        record(
+            10,
+            CameraApp::Anran,
+            CameraRole::Unreviewed,
+            Some("02:ab:cd:12:34:56"),
+        );
         record(11, CameraApp::Anran, CameraRole::UserConfirmed, None);
-        record(12, CameraApp::VicoHome, CameraRole::UserConfirmed, Some("02:ab:cd:12:34:57"));
-        record(13, CameraApp::Anran, CameraRole::NotCamera, Some("02:ab:cd:12:34:58"));
+        record(
+            12,
+            CameraApp::VicoHome,
+            CameraRole::UserConfirmed,
+            Some("02:ab:cd:12:34:57"),
+        );
+        record(
+            13,
+            CameraApp::Anran,
+            CameraRole::NotCamera,
+            Some("02:ab:cd:12:34:58"),
+        );
         assert_eq!(
             registry.anran_mac_snapshot(&a),
             vec![Some("02:ab:cd:12:34:56".into()), None]
