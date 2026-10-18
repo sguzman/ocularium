@@ -162,11 +162,7 @@ impl PpcsOneShotProbe {
     /// Explicit one-shot start. Exactly two request packets go to each
     /// authorized caller-supplied root: 0x00 hello and 0x20 rendezvous.
     /// Does not transmit automatically during object construction.
-    pub fn start(
-        &mut self,
-        io: &mut impl DatagramIo,
-        now: Instant,
-    ) -> Result<(), ProbeError> {
+    pub fn start(&mut self, io: &mut impl DatagramIo, now: Instant) -> Result<(), ProbeError> {
         if self.state != ProbeState::Ready {
             return Err(ProbeError::Closed);
         }
@@ -227,9 +223,9 @@ impl PpcsOneShotProbe {
         let Ok(decoded) = self.init.packet_cipher().decode_obfuscated(bytes) else {
             return Ok(ProbeEvent::Ignored);
         };
-        let observation = self
-            .preflight
-            .observe_plaintext_packet(from, decoded.kind(), decoded.payload());
+        let observation =
+            self.preflight
+                .observe_plaintext_packet(from, decoded.kind(), decoded.payload());
         match observation {
             PeerObservation::Ignored => Ok(ProbeEvent::Ignored),
             PeerObservation::RootOffer => {
@@ -244,9 +240,7 @@ impl PpcsOneShotProbe {
                 self.offered += 1;
                 let base = candidate.port();
                 let identity = *self.preflight.identity_bytes();
-                for port in base.saturating_sub(PUNCH_RADIUS)
-                    ..=base.saturating_add(PUNCH_RADIUS)
-                {
+                for port in base.saturating_sub(PUNCH_RADIUS)..=base.saturating_add(PUNCH_RADIUS) {
                     if port != 0 {
                         self.send(
                             io,
@@ -315,14 +309,12 @@ fn safe_endpoint(addr: &SocketAddrV4) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        meari_devices::Category,
-        meari_ppcs_discovery::PpcsDeviceInit,
+        meari_devices::Category, meari_ppcs_discovery::PpcsDeviceInit,
         meari_ppcs_wire::PpcsPacketCipher,
     };
 
     const UUID: &str = "01-BCDEF-23B";
-    const INIT: &str =
-        "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
+    const INIT: &str = "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
 
     fn camera(transport: Transport) -> AuthorizedCamera {
         AuthorizedCamera {
@@ -401,8 +393,7 @@ mod tests {
     #[test]
     fn no_traffic_before_explicit_start_then_exact_hello_and_request() {
         let cam = camera(Transport::Ppcs);
-        let mut probe =
-            PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
+        let mut probe = PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
         let mut io = MockIo::default();
         assert_eq!(probe.state(), ProbeState::Ready);
         assert!(io.sent.is_empty());
@@ -423,7 +414,10 @@ mod tests {
             .unwrap();
         assert_eq!(request.kind(), 0x20);
         assert_eq!(request.payload().len(), 36);
-        assert_eq!(&request.payload()[20..], &encode_peer_sockaddr(Some(local())).unwrap());
+        assert_eq!(
+            &request.payload()[20..],
+            &encode_peer_sockaddr(Some(local())).unwrap()
+        );
         assert_eq!(io.sent[1].0, root());
         assert_eq!(probe.start(&mut io, now).err(), Some(ProbeError::Closed));
     }
@@ -431,8 +425,7 @@ mod tests {
     #[test]
     fn candidate_requires_root_offer_and_correct_identity_and_port() {
         let cam = camera(Transport::Ppcs);
-        let mut probe =
-            PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
+        let mut probe = PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
         let mut io = MockIo::default();
         let now = Instant::now();
         probe.start(&mut io, now).unwrap();
@@ -455,11 +448,15 @@ mod tests {
         );
         assert_eq!(io.sent.len(), 9);
         assert_eq!(
-            probe.receive(&mut io, peer(), &encoded(0x42, b"wrong-id"), now).unwrap(),
+            probe
+                .receive(&mut io, peer(), &encoded(0x42, b"wrong-id"), now)
+                .unwrap(),
             ProbeEvent::Ignored
         );
         assert_eq!(
-            probe.receive(&mut io, peer(), &encoded(0x41, id.token()), now).unwrap(),
+            probe
+                .receive(&mut io, peer(), &encoded(0x41, id.token()), now)
+                .unwrap(),
             ProbeEvent::ChallengeResponded
         );
         assert_eq!(io.sent.len(), 10);
@@ -478,15 +475,16 @@ mod tests {
     fn request_budget_expiry_and_failure_cannot_trigger_retries() {
         let cam = camera(Transport::Ppcs);
         let now = Instant::now();
-        let mut probe =
-            PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
+        let mut probe = PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
         let mut io = MockIo::default();
         probe.start(&mut io, now).unwrap();
         assert!(probe.expire_at(now + DEADLINE));
         assert_eq!(probe.state(), ProbeState::Stopped);
         assert_eq!(probe.start(&mut io, now).err(), Some(ProbeError::Closed));
         assert_eq!(
-            probe.receive(&mut io, peer(), &[0], now + DEADLINE).unwrap(),
+            probe
+                .receive(&mut io, peer(), &[0], now + DEADLINE)
+                .unwrap(),
             ProbeEvent::Stopped
         );
         let mut failed =
@@ -507,13 +505,14 @@ mod tests {
     fn excessive_inbound_traffic_stops_one_shot_without_more_output() {
         let cam = camera(Transport::Ppcs);
         let now = Instant::now();
-        let mut probe =
-            PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
+        let mut probe = PpcsOneShotProbe::from_authorized_record(&cam, &[root()], local()).unwrap();
         let mut io = MockIo::default();
         probe.start(&mut io, now).unwrap();
         for _ in 0..MAX_RX_DATAGRAMS {
             assert_eq!(
-                probe.receive(&mut io, peer(), &encoded(0xe0, &[]), now).unwrap(),
+                probe
+                    .receive(&mut io, peer(), &encoded(0xe0, &[]), now)
+                    .unwrap(),
                 ProbeEvent::Ignored
             );
         }
