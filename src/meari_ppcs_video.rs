@@ -17,11 +17,9 @@ use zeroize::Zeroize;
 
 use crate::{
     meari_ppcs::{
-        ChannelAck, PpcsError, PpcsMediaKind, PpcsReliableReceiver, PpcsMediaReassembler,
+        ChannelAck, PpcsError, PpcsMediaKind, PpcsMediaReassembler, PpcsReliableReceiver,
     },
-    meari_video::{
-        annexb_units, detect_codec, EncodedSample, VideoCodec, VideoError,
-    },
+    meari_video::{annexb_units, detect_codec, EncodedSample, VideoCodec, VideoError},
 };
 
 const MAX_ACCESS_UNIT: usize = 8 * 1024 * 1024;
@@ -231,7 +229,10 @@ impl PpcsMediaPipeline {
         outer_type: u8,
         inner_packet: &[u8],
     ) -> Result<MediaDelivery, PipelineError> {
-        let delivery = match self.reliable.accept_plaintext_data(outer_type, inner_packet) {
+        let delivery = match self
+            .reliable
+            .accept_plaintext_data(outer_type, inner_packet)
+        {
             Ok(value) => value,
             Err(error) => {
                 self.reset();
@@ -359,7 +360,9 @@ mod tests {
         );
         let parts: Vec<&[u8]> = key.chunks(19).collect();
         let second = packet(1, 1, parts[1]);
-        let later = pipeline.push_verified_plaintext_data(0xd0, &second).unwrap();
+        let later = pipeline
+            .push_verified_plaintext_data(0xd0, &second)
+            .unwrap();
         assert!(later.samples.is_empty());
         let first = packet(1, 0, parts[0]);
         let early = pipeline.push_verified_plaintext_data(0xd0, &first).unwrap();
@@ -373,9 +376,7 @@ mod tests {
         }
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].codec, VideoCodec::H264);
-        let repeated = pipeline
-            .push_verified_plaintext_data(0xd0, &first)
-            .unwrap();
+        let repeated = pipeline.push_verified_plaintext_data(0xd0, &first).unwrap();
         assert!(repeated.samples.is_empty());
     }
 
@@ -489,12 +490,27 @@ mod tests {
     fn synthetic_ppcs_h264_keyframe_reaches_cpu_decoder_when_x264_available() {
         let result = Command::new("ffmpeg")
             .args([
-                "-hide_banner", "-nostdin", "-loglevel", "error",
-                "-f", "lavfi", "-i", "color=c=blue:s=160x90:r=5",
-                "-frames:v", "1", "-c:v", "libx264",
-                "-preset", "ultrafast", "-tune", "zerolatency",
-                "-x264-params", "keyint=1:min-keyint=1:scenecut=0",
-                "-f", "h264", "pipe:1",
+                "-hide_banner",
+                "-nostdin",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=blue:s=160x90:r=5",
+                "-frames:v",
+                "1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-x264-params",
+                "keyint=1:min-keyint=1:scenecut=0",
+                "-f",
+                "h264",
+                "pipe:1",
             ])
             .output();
         let Ok(result) = result else {
