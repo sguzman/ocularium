@@ -153,22 +153,12 @@ fn detect_codec(units: &[&[u8]]) -> Option<VideoCodec> {
 /// Stateful parser for consecutive *complete* reassembled VVP packets.
 /// After loss or a discontinuity, waits for a fresh keyframe. Audio and info
 /// are ignored. Codecs are never inferred from model, firmware or IP.
+#[derive(Default)]
 pub struct VvpVideoAdapter {
     codec: Option<VideoCodec>,
     params: BTreeMap<u8, Vec<u8>>,
     gate: SequenceGate,
     previous_sequence: Option<u32>,
-}
-
-impl Default for VvpVideoAdapter {
-    fn default() -> Self {
-        Self {
-            codec: None,
-            params: BTreeMap::new(),
-            gate: SequenceGate::default(),
-            previous_sequence: None,
-        }
-    }
 }
 
 impl Drop for VvpVideoAdapter {
