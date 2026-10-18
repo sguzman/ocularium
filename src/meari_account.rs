@@ -256,9 +256,7 @@ impl PlatformSummary {
             PlatformStatus::TemporarilyUnavailable => {
                 "IoT platform config: transiently unavailable; no retry.".into()
             }
-            PlatformStatus::Unavailable => {
-                "IoT platform config: unavailable; no retry.".into()
-            }
+            PlatformStatus::Unavailable => "IoT platform config: unavailable; no retry.".into(),
             PlatformStatus::InvalidReply => {
                 "IoT platform config: invalid response; no retry.".into()
             }
@@ -293,7 +291,9 @@ fn summarize_platform_response(bytes: &[u8]) -> PlatformSummary {
             ..Default::default()
         },
         Some("1001") => {
-            let Some(config) = result.pointer("/result/pfApi").and_then(serde_json::Value::as_object)
+            let Some(config) = result
+                .pointer("/result/pfApi")
+                .and_then(serde_json::Value::as_object)
             else {
                 return PlatformSummary {
                     status: PlatformStatus::InvalidReply,
@@ -1145,14 +1145,18 @@ mod tests {
                     assert_eq!(request.params.get("iotType").map(String::as_str), Some("4"));
                     assert_eq!(request.params.get("userID").map(String::as_str), Some("3"));
                     assert!(request.params.contains_key("signature"));
-                    assert_eq!(request.headers.get("X-Ca-Key").map(String::as_str), Some("private-token"));
+                    assert_eq!(
+                        request.headers.get("X-Ca-Key").map(String::as_str),
+                        Some("private-token")
+                    );
                     Ok(self.status.to_vec())
                 }
                 4 => {
                     assert_eq!(request.path, DEVICE_PATH);
                     Ok(br#"{"resultCode":"1001","result":{"ipc":[
                         {"deviceID":1,"snNum":"sample"}
-                    ]}}"#.to_vec())
+                    ]}}"#
+                        .to_vec())
                 }
                 5 => {
                     assert_eq!(request.path, HOMES_PATH);
@@ -1203,7 +1207,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mock.calls, 5);
-        assert_eq!(found.platform.status, PlatformStatus::TemporarilyUnavailable);
+        assert_eq!(
+            found.platform.status,
+            PlatformStatus::TemporarilyUnavailable
+        );
         assert_eq!(found.summary().cameras, 1);
     }
 
