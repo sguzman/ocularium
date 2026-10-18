@@ -285,7 +285,7 @@ mod tests {
           "result":{
             "ipc":[{"deviceID":1,"snNum":"private-device-A","hostKey":"private-host-key",
               "p2pInit":"private-bootstrap", "deviceP2P":"ppcs",
-              "mac":"70:3A:2D:32:F7:D8"}],
+              "mac":"02:AB:CD:12:34:56"}],
             "base":[{"deviceID":9876,"snNum":"not-a-camera"}],
             "homes":[{"deviceList":[
               {"deviceID":"1","snNum":"private-device-A"},
@@ -299,11 +299,11 @@ mod tests {
         assert_eq!(summary.ppcs, 1);
         assert_eq!(summary.signaling, 1);
         assert_eq!(summary.battery, 1);
-        assert!(catalog.by_mac("70:3a:2d:32:f7:d8").is_some());
-        assert!(catalog.by_mac("70:3a:2d:32:f7:d9").is_none());
+        assert!(catalog.by_mac("02:ab:cd:12:34:56").is_some());
+        assert!(catalog.by_mac("02:ab:cd:12:34:57").is_none());
         assert_eq!(
             catalog
-                .by_mac("70:3a:2d:32:f7:d8")
+                .by_mac("02:ab:cd:12:34:56")
                 .unwrap()
                 .host_key
                 .as_deref(),
@@ -315,7 +315,7 @@ mod tests {
             "private-account-token",
             "private-host-key",
             "private-bootstrap",
-            "70:3a:2d:32:f7:d8",
+            "02:ab:cd:12:34:56",
         ] {
             assert!(!report.contains(secret));
         }
@@ -353,17 +353,17 @@ mod tests {
             "00:00:00:00:00:00",
             "ff:ff:ff:ff:ff:ff",
             "01:00:00:00:00:00",
-            "70-3a-2d-32-f7-d8",
+            "02-ab-cd-12-34-56",
         ] {
             assert!(normalize_mac(invalid).is_none());
         }
         let payload = br#"{"resultCode":"1001","result":{"ipc":[
-            {"deviceID":1,"snNum":"a","model":"b81","ip":"192.168.0.107"}
+            {"deviceID":1,"snNum":"a","model":"b81","ip":"192.0.2.107"}
         ]}}"#;
         let catalog = parse_authenticated_device_list(payload).unwrap();
         assert_eq!(catalog.summary().cameras, 1);
         assert_eq!(catalog.summary().transport_unverified, 1);
-        assert!(catalog.by_mac("70:3a:2d:32:f7:d8").is_none());
+        assert!(catalog.by_mac("02:ab:cd:12:34:56").is_none());
     }
 
     #[test]
