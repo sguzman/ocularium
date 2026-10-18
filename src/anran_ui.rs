@@ -10,7 +10,9 @@ use eframe::egui;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    meari_account::{self, AuthError, Credentials, DiscoveryCoverage},
+    meari_account::{
+        self, AuthError, Credentials, DiscoveryCoverage, DiscoveryOptions, PlatformSummary,
+    },
     meari_devices::{CatalogCorrelation, CatalogSummary},
 };
 
@@ -60,6 +62,7 @@ struct DiscoveryReport {
     catalog: CatalogSummary,
     correlation: CatalogCorrelation,
     coverage: DiscoveryCoverage,
+    platform: PlatformSummary,
 }
 
 pub struct AnranPanel {
@@ -69,6 +72,7 @@ pub struct AnranPanel {
     dialing_code: String,
     paired_app: PairedApp,
     camera_listed_in_app: bool,
+    inspect_platform: bool,
     consent: bool,
     rx: Option<Receiver<Result<DiscoveryReport, AuthError>>>,
     result: Option<Result<DiscoveryReport, AuthError>>,
@@ -83,6 +87,7 @@ impl Default for AnranPanel {
             dialing_code: "52".into(),
             paired_app: PairedApp::Unknown,
             camera_listed_in_app: false,
+            inspect_platform: false,
             consent: false,
             rx: None,
             result: None,
@@ -127,6 +132,7 @@ impl AnranPanel {
         self.password.clear();
         self.consent = false;
         self.camera_listed_in_app = false;
+        self.inspect_platform = false;
         self.result = None;
     }
 
@@ -176,21 +182,26 @@ impl AnranPanel {
         let Some(credentials) = self.take_consented_credentials() else {
             return;
         };
+        let options = DiscoveryOptions {
+            inspect_platform: std::mem::take(&mut self.inspect_platform),
+        };
         // Local-only selected-scope registry snapshot. It is never passed to
         // Exchange or included in its HTTP request headers or form fields.
         let mut saved_macs = saved_macs.to_vec();
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         thread::spawn(move || {
-            let result = meari_account::discover_account(
+            let result = meari_account::discover_account_with_options(
                 &mut meari_account::HttpsExchange::default(),
                 &mut meari_account::SystemClock,
                 credentials,
+                options,
             )
             .map(|discovery| DiscoveryReport {
                 catalog: discovery.summary(),
                 correlation: discovery.correlate_saved_macs(&saved_macs),
                 coverage: discovery.coverage,
+                platform: discovery.platform,
             });
             for mac in saved_macs.iter_mut().flatten() {
                 mac.zeroize();
@@ -288,6 +299,15 @@ impl AnranPanel {
                 });
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.checkbox(
+                        &mut self.inspect_platform,
+                        "Also inspect optional IoT platform configuration (one extra GET)",
+                    );
+                });
+                ui.small(
+                    "Off by default. Reports only feature-presence flags; does not contact                      OpenAPI/MQTT or store any platform credentials.",
+                );
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.checkbox(
                         &mut self.consent,
                         "I authorize this login and accept possible mobile session logout",
                     );
@@ -309,6 +329,7 @@ impl AnranPanel {
                         self.account.clear();
                         self.password.clear();
                         self.consent = false;
+                        self.inspect_platform = false;
                         self.result = None;
                     }
                 });
@@ -319,6 +340,7 @@ impl AnranPanel {
                 if let Some(result) = self.result {
                     match result {
                         Ok(report) => {
+                            ui.label(report.platform.safe_text());
                             ui.label(report.coverage.safe_text());
                             ui.label(report.catalog.safe_text());
                             ui.label(report.correlation.safe_text());

@@ -27,6 +27,7 @@ const LOGIN_PATH: &str = "/meari/app/login";
 const DEVICE_PATH: &str = "/v1/app/device/info/get";
 const HOMES_PATH: &str = "/v1/app/home/list";
 const SHARED_DEVICE_PATH: &str = "/v1/app/home/join/device/list";
+const PLATFORM_PATH: &str = "/v2/app/config/pf/init";
 /// Hard cap on additional account requests per explicit, one-shot UI action.
 const MAX_SHARED_HOMES: usize = 8;
 const CA_KEY: &str = "bc29be30292a4309877807e101afbd51";
@@ -89,7 +90,7 @@ impl Default for HttpsExchange {
 impl Exchange for HttpsExchange {
     fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
         let expected_method = match request.path {
-            REDIRECT_PATH | HOMES_PATH | SHARED_DEVICE_PATH => Method::Get,
+            REDIRECT_PATH | HOMES_PATH | SHARED_DEVICE_PATH | PLATFORM_PATH => Method::Get,
             LOGIN_PATH | DEVICE_PATH => Method::Post,
             _ => return Err(AuthError::InvalidServer),
         };
@@ -211,6 +212,7 @@ impl DiscoveryCoverage {
 pub struct AccountDiscovery {
     catalog: AuthorizedCatalog,
     pub coverage: DiscoveryCoverage,
+    pub platform: PlatformSummary,
 }
 
 impl AccountDiscovery {
@@ -224,6 +226,106 @@ impl AccountDiscovery {
     ) -> meari_devices::CatalogCorrelation {
         self.catalog.correlate_saved_macs(saved)
     }
+}
+
+/// Optional account configuration inspection. Only fixed, non-secret
+/// booleans reach the UI; service hosts, signatures and keys are discarded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlatformStatus {
+    #[default]
+    NotRequested,
+    Available,
+    TemporarilyUnavailable,
+    Unavailable,
+    InvalidReply,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlatformSummary {
+    pub status: PlatformStatus,
+    pub openapi_declared: bool,
+    pub mqtt_declared: bool,
+    pub platform_declared: bool,
+    pub encrypted_signature_declared: bool,
+}
+
+impl PlatformSummary {
+    pub fn safe_text(self) -> String {
+        match self.status {
+            PlatformStatus::NotRequested => "IoT platform config: not requested.".into(),
+            PlatformStatus::TemporarilyUnavailable => {
+                "IoT platform config: transiently unavailable; no retry.".into()
+            }
+            PlatformStatus::Unavailable => {
+                "IoT platform config: unavailable; no retry.".into()
+            }
+            PlatformStatus::InvalidReply => {
+                "IoT platform config: invalid response; no retry.".into()
+            }
+            PlatformStatus::Available => format!(
+                "IoT platform config: present; OpenAPI declared={}, MQTT declared={}, \
+                 platform declared={}, encrypted platform signature declared={}. \
+                 No endpoints, credentials or connectivity verified.",
+                self.openapi_declared,
+                self.mqtt_declared,
+                self.platform_declared,
+                self.encrypted_signature_declared,
+            ),
+        }
+    }
+}
+
+/// Read only the shape of the configuration. Never return vendor URLs,
+/// access IDs, access keys, decrypted secrets, or raw JSON.
+fn summarize_platform_response(bytes: &[u8]) -> PlatformSummary {
+    let result = match read_json(bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return PlatformSummary {
+                status: PlatformStatus::InvalidReply,
+                ..Default::default()
+            };
+        }
+    };
+    match result.get("resultCode").and_then(serde_json::Value::as_str) {
+        Some("1023") => PlatformSummary {
+            status: PlatformStatus::TemporarilyUnavailable,
+            ..Default::default()
+        },
+        Some("1001") => {
+            let Some(config) = result.pointer("/result/pfApi").and_then(serde_json::Value::as_object)
+            else {
+                return PlatformSummary {
+                    status: PlatformStatus::InvalidReply,
+                    ..Default::default()
+                };
+            };
+            let declared = |branch: &str, key: &str| {
+                config
+                    .get(branch)
+                    .and_then(serde_json::Value::as_object)
+                    .and_then(|object| object.get(key))
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|value| !value.is_empty() && value.len() <= 2048)
+            };
+            PlatformSummary {
+                status: PlatformStatus::Available,
+                openapi_declared: declared("openapi", "domain"),
+                mqtt_declared: declared("mqtt", "host"),
+                platform_declared: declared("platform", "domain"),
+                encrypted_signature_declared: declared("platform", "signature"),
+            }
+        }
+        _ => PlatformSummary {
+            status: PlatformStatus::Unavailable,
+            ..Default::default()
+        },
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiscoveryOptions {
+    pub inspect_platform: bool,
 }
 
 impl From<meari_devices::CatalogError> for AuthError {
@@ -486,6 +588,24 @@ fn signed_home_request(
     })
 }
 
+fn platform_request(
+    credentials: &Credentials,
+    session: &Session,
+    stamp: Stamp,
+) -> Result<WireRequest, AuthError> {
+    let mut params = form_fields(&stamp, credentials)?;
+    params.insert("userID".into(), session.user_id.as_str().to_owned());
+    params.insert("iotType".into(), "4".into());
+    sign_form(&mut params, &session.token);
+    Ok(WireRequest {
+        method: Method::Get,
+        origin: session.origin.clone(),
+        path: PLATFORM_PATH,
+        params,
+        headers: ca_headers(PLATFORM_PATH, &stamp, Some(&session.token))?,
+    })
+}
+
 struct HomeIds {
     ids: Vec<Zeroizing<String>>,
     truncated: bool,
@@ -547,7 +667,19 @@ fn parse_home_ids(bytes: &[u8]) -> Result<HomeIds, AuthError> {
 pub fn discover_account<T: Exchange, C: Clock>(
     transport: &mut T,
     clock: &mut C,
+    credentials: Credentials,
+) -> Result<AccountDiscovery, AuthError> {
+    discover_account_with_options(transport, clock, credentials, DiscoveryOptions::default())
+}
+
+/// Additional opt-in platform query is disabled by default and can never
+/// trigger a retry or an additional login. It remains on the login's verified
+/// API origin; returned service hosts are not contacted.
+pub fn discover_account_with_options<T: Exchange, C: Clock>(
+    transport: &mut T,
+    clock: &mut C,
     mut credentials: Credentials,
+    options: DiscoveryOptions,
 ) -> Result<AccountDiscovery, AuthError> {
     if credentials.account.is_empty()
         || credentials.account.len() > 254
@@ -608,6 +740,20 @@ pub fn discover_account<T: Exchange, C: Clock>(
         user_id: Zeroizing::new(user_id),
         token: Zeroizing::new(token),
     };
+    let platform = if options.inspect_platform {
+        match transport.exchange(platform_request(&credentials, &session, clock.next())?) {
+            Ok(raw) => {
+                let raw = Zeroizing::new(raw);
+                summarize_platform_response(&raw)
+            }
+            Err(_) => PlatformSummary {
+                status: PlatformStatus::Unavailable,
+                ..Default::default()
+            },
+        }
+    } else {
+        PlatformSummary::default()
+    };
     let mut coverage = DiscoveryCoverage::default();
     let mut catalog = meari_devices::parse_authenticated_device_list(
         br#"{"resultCode":"1001","result":{"ipc":[]}}"#,
@@ -666,7 +812,11 @@ pub fn discover_account<T: Exchange, C: Clock>(
     if !coverage.default_list_ok && coverage.homes_succeeded == 0 {
         return Err(AuthError::DeviceListRejected);
     }
-    Ok(AccountDiscovery { catalog, coverage })
+    Ok(AccountDiscovery {
+        catalog,
+        coverage,
+        platform,
+    })
 }
 
 #[cfg(test)]
@@ -916,6 +1066,145 @@ mod tests {
         assert_eq!(homes.ids[1].as_str(), "1");
         assert!(parse_home_ids(br#"{"resultCode":"1001","result":{}}"#).is_err());
         assert!(parse_home_ids(br#"{"resultCode":"1023"}"#).is_err());
+    }
+
+    #[test]
+    fn platform_shape_inspection_redacts_endpoints_and_credentials() {
+        let json = br#"{"resultCode":"1001","result":{"pfApi":{
+            "openapi":{"domain":"https://private-openapi.example"},
+            "mqtt":{"host":"private-broker.example","port":1883},
+            "platform":{"domain":"private-platform.example",
+                        "signature":"private-encrypted-signature",
+                        "expireTime":"123"}
+        }},"secret":"private-account-token"}"#;
+        let summary = summarize_platform_response(json);
+        assert_eq!(
+            summary,
+            PlatformSummary {
+                status: PlatformStatus::Available,
+                openapi_declared: true,
+                mqtt_declared: true,
+                platform_declared: true,
+                encrypted_signature_declared: true,
+            }
+        );
+        let display = summary.safe_text();
+        for secret in [
+            "private-openapi.example",
+            "private-broker.example",
+            "private-platform.example",
+            "private-encrypted-signature",
+            "private-account-token",
+        ] {
+            assert!(!display.contains(secret));
+        }
+    }
+
+    #[test]
+    fn optional_platform_parser_distinguishes_transient_and_bad_responses() {
+        assert_eq!(
+            summarize_platform_response(br#"{"resultCode":"1023"}"#).status,
+            PlatformStatus::TemporarilyUnavailable,
+        );
+        assert_eq!(
+            summarize_platform_response(br#"{"resultCode":"1002"}"#).status,
+            PlatformStatus::Unavailable,
+        );
+        for input in [
+            b"not-json".as_slice(),
+            br#"{"resultCode":"1001","result":{}}"#.as_slice(),
+            br#"{"resultCode":"1001","result":{"pfApi":[]}}"#.as_slice(),
+        ] {
+            assert_eq!(
+                summarize_platform_response(input).status,
+                PlatformStatus::InvalidReply,
+            );
+        }
+    }
+
+    struct PlatformFixture {
+        calls: usize,
+        status: &'static [u8],
+    }
+
+    impl Exchange for PlatformFixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            match self.calls {
+                1 => {
+                    assert_eq!(request.path, REDIRECT_PATH);
+                    Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#.to_vec())
+                }
+                2 => {
+                    assert_eq!(request.path, LOGIN_PATH);
+                    Ok(br#"{"resultCode":"1001","result":{"userID":3,"userToken":"private-token"}}"#.to_vec())
+                }
+                3 => {
+                    assert_eq!(request.path, PLATFORM_PATH);
+                    assert_eq!(request.method, Method::Get);
+                    assert_eq!(request.params.get("iotType").map(String::as_str), Some("4"));
+                    assert_eq!(request.params.get("userID").map(String::as_str), Some("3"));
+                    assert!(request.params.contains_key("signature"));
+                    assert_eq!(request.headers.get("X-Ca-Key").map(String::as_str), Some("private-token"));
+                    Ok(self.status.to_vec())
+                }
+                4 => {
+                    assert_eq!(request.path, DEVICE_PATH);
+                    Ok(br#"{"resultCode":"1001","result":{"ipc":[
+                        {"deviceID":1,"snNum":"sample"}
+                    ]}}"#.to_vec())
+                }
+                5 => {
+                    assert_eq!(request.path, HOMES_PATH);
+                    Ok(br#"{"resultCode":"1001","result":{"homes":[]}}"#.to_vec())
+                }
+                _ => panic!("Unexpected additional request after one-shot platform inspection"),
+            }
+        }
+    }
+
+    #[test]
+    fn optional_platform_query_is_exactly_one_signed_get() {
+        let mut mock = PlatformFixture {
+            calls: 0,
+            status: br#"{"resultCode":"1001","result":{"pfApi":{
+                "platform":{"domain":"private.example","signature":"encrypted-private"}
+            }}}"#,
+        };
+        let found = discover_account_with_options(
+            &mut mock,
+            &mut TestClock { n: 0 },
+            account(),
+            DiscoveryOptions {
+                inspect_platform: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(mock.calls, 5);
+        assert_eq!(found.summary().cameras, 1);
+        assert_eq!(found.platform.status, PlatformStatus::Available);
+        assert!(found.platform.encrypted_signature_declared);
+        assert!(!found.platform.safe_text().contains("private.example"));
+    }
+
+    #[test]
+    fn transient_platform_failure_never_retries_or_blocks_camera_discovery() {
+        let mut mock = PlatformFixture {
+            calls: 0,
+            status: br#"{"resultCode":"1023"}"#,
+        };
+        let found = discover_account_with_options(
+            &mut mock,
+            &mut TestClock { n: 0 },
+            account(),
+            DiscoveryOptions {
+                inspect_platform: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(mock.calls, 5);
+        assert_eq!(found.platform.status, PlatformStatus::TemporarilyUnavailable);
+        assert_eq!(found.summary().cameras, 1);
     }
 
     #[test]
