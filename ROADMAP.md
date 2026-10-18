@@ -96,6 +96,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Bounded TLS-verifying transport restricted to vendor HTTPS domains, with proxy/redirect disabled, no GUI connection or automatic requests
 - [x] Add a consent-gated, one-shot ANRAN account panel with masked transient fields and count-only results
 - [x] Test consent-to-worker handoff (no connection before consent; credential fields cleared once transferred); best-effort buffer zeroization
+- [x] Triangulate ANRAN app identity against its App Store Meari/84 link and the community profile; separate app-level evidence from individual camera support
+- [x] Block ANRAN login until user explicitly confirms their camera is paired with the ANRAN mobile app, not ARCCTV/CloudEdge/EseeCloud; reset credentials/consent when app changes
 - [ ] Extend ANRAN account discovery to shared homes and optional platform initialization
 - [ ] Build an opt-in, secure ANRAN account client that can verify an authenticated device list before trying streaming; keep credentials/tokens out of disk and logs
 - [ ] Verify ANRAN's exact account backend and device protocol prior to implementing any app authentication

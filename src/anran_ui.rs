@@ -14,11 +14,52 @@ use crate::{
     meari_devices::CatalogSummary,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum PairedApp {
+    #[default]
+    Unknown,
+    Anran,
+    CloudEdge,
+    Arcctv,
+    Eseecloud,
+    Other,
+}
+
+impl PairedApp {
+    const ALL: [Self; 6] = [
+        Self::Unknown,
+        Self::Anran,
+        Self::CloudEdge,
+        Self::Arcctv,
+        Self::Eseecloud,
+        Self::Other,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "Unknown / not checked",
+            Self::Anran => "ANRAN app",
+            Self::CloudEdge => "CloudEdge app",
+            Self::Arcctv => "ARCCTV app",
+            Self::Eseecloud => "EseeCloud app",
+            Self::Other => "Other app",
+        }
+    }
+
+    fn supported_by_client(self) -> bool {
+        // This client sends only ANRAN's sourceApp=84 wire identity.
+        // An ANRAN-branded camera can use an entirely different app.
+        self == Self::Anran
+    }
+}
+
 pub struct AnranPanel {
     account: Zeroizing<String>,
     password: Zeroizing<String>,
     country: String,
     dialing_code: String,
+    paired_app: PairedApp,
+    camera_listed_in_app: bool,
     consent: bool,
     rx: Option<Receiver<Result<CatalogSummary, AuthError>>>,
     result: Option<Result<CatalogSummary, AuthError>>,
@@ -31,6 +72,8 @@ impl Default for AnranPanel {
             password: Zeroizing::new(String::new()),
             country: "MX".into(),
             dialing_code: "52".into(),
+            paired_app: PairedApp::Unknown,
+            camera_listed_in_app: false,
             consent: false,
             rx: None,
             result: None,
@@ -65,6 +108,19 @@ impl AnranPanel {
         self.rx.is_some()
     }
 
+    fn set_paired_app(&mut self, new_app: PairedApp) {
+        if self.busy() || new_app == self.paired_app {
+            return;
+        }
+        self.paired_app = new_app;
+        // Do not carry consent or entered credentials across app families.
+        self.account.clear();
+        self.password.clear();
+        self.consent = false;
+        self.camera_listed_in_app = false;
+        self.result = None;
+    }
+
     pub fn poll(&mut self) {
         if let Some(rx) = self.rx.take() {
             match rx.try_recv() {
@@ -79,6 +135,8 @@ impl AnranPanel {
 
     fn ready(&self) -> bool {
         !self.busy()
+            && self.paired_app.supported_by_client()
+            && self.camera_listed_in_app
             && self.consent
             && valid(
                 self.account.as_str(),
@@ -133,6 +191,45 @@ impl AnranPanel {
                 ui.label("One request sequence, no automatic retries or saved credentials.");
                 ui.small("Country and dialing code must match the account registration region.");
                 let busy = self.busy();
+                let mut selected_app = self.paired_app;
+                ui.horizontal(|ui| {
+                    ui.label("App where this camera is paired");
+                    ui.add_enabled_ui(!busy, |ui| {
+                        egui::ComboBox::from_id_salt("anran_account_app_choice")
+                            .selected_text(selected_app.label())
+                            .show_ui(ui, |ui| {
+                                for app in PairedApp::ALL {
+                                    ui.selectable_value(&mut selected_app, app, app.label());
+                                }
+                            });
+                    });
+                });
+                self.set_paired_app(selected_app);
+                if !self.paired_app.supported_by_client() {
+                    ui.label(
+                        "This experimental login uses the ANRAN app profile only. \
+                         The camera brand or model does not identify its account backend.",
+                    );
+                    ui.small(
+                        "ANRAN also sells cameras for ARCCTV/CloudEdge ecosystems. \
+                         Select the app where the camera actually appears, not its brand.",
+                    );
+                    return;
+                }
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.checkbox(
+                        &mut self.camera_listed_in_app,
+                        "I verified this camera is listed in my ANRAN app account",
+                    );
+                });
+                if !self.camera_listed_in_app {
+                    ui.small(
+                        "No network request. Confirm the paired app first; app identity \
+                         alone still does not verify camera P2P transport.",
+                    );
+                    return;
+                }
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.label("Country");
                     ui.add_enabled(
@@ -215,10 +312,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn anran_brand_never_implies_anran_app_backend() {
+        let all = PairedApp::ALL;
+        assert_eq!(all.iter().filter(|app| app.supported_by_client()).count(), 1);
+        assert!(PairedApp::Anran.supported_by_client());
+        assert!(!PairedApp::Unknown.supported_by_client());
+        assert!(!PairedApp::CloudEdge.supported_by_client());
+        assert!(!PairedApp::Arcctv.supported_by_client());
+        assert!(!PairedApp::Eseecloud.supported_by_client());
+        assert!(!PairedApp::Other.supported_by_client());
+    }
+
+    #[test]
+    fn switching_app_resets_credential_state_and_consent() {
+        let mut panel = AnranPanel {
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            consent: true,
+            ..Default::default()
+        };
+        assert!(panel.ready());
+        panel.set_paired_app(PairedApp::Arcctv);
+        assert_eq!(panel.paired_app, PairedApp::Arcctv);
+        assert!(!panel.camera_listed_in_app);
+        assert!(!panel.consent);
+        assert!(panel.account.is_empty());
+        assert!(panel.password.is_empty());
+        panel.set_paired_app(PairedApp::Anran);
+        assert!(!panel.ready());
+    }
+
+    #[test]
     fn explicit_consent_and_region_required() {
         let mut panel = AnranPanel {
             account: Zeroizing::new("sample@example.invalid".into()),
             password: Zeroizing::new("sample".into()),
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
             ..Default::default()
         };
         assert!(!panel.ready());
@@ -233,6 +365,8 @@ mod tests {
         let mut panel = AnranPanel {
             account: Zeroizing::new("sample@example.invalid".into()),
             password: Zeroizing::new("sample".into()),
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
             ..Default::default()
         };
         assert!(panel.take_consented_credentials().is_none());
@@ -246,6 +380,8 @@ mod tests {
         let mut panel = AnranPanel {
             account: Zeroizing::new("sample@example.invalid".into()),
             password: Zeroizing::new("sample".into()),
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
             consent: true,
             ..Default::default()
         };
@@ -260,10 +396,36 @@ mod tests {
     }
 
     #[test]
+    fn consent_cannot_override_unverified_or_unsupported_app() {
+        let mut panel = AnranPanel {
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            consent: true,
+            ..Default::default()
+        };
+        assert!(!panel.ready());
+        panel.camera_listed_in_app = true;
+        assert!(!panel.ready());
+        for other_app in [
+            PairedApp::CloudEdge,
+            PairedApp::Arcctv,
+            PairedApp::Eseecloud,
+            PairedApp::Other,
+        ] {
+            panel.paired_app = other_app;
+            assert!(panel.take_consented_credentials().is_none());
+        }
+        panel.paired_app = PairedApp::Anran;
+        assert!(panel.ready());
+    }
+
+    #[test]
     fn busy_or_invalid_inputs_never_handoff_credentials() {
         let mut panel = AnranPanel {
             account: Zeroizing::new("sample@example.invalid".into()),
             password: Zeroizing::new("sample".into()),
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
             consent: true,
             ..Default::default()
         };
