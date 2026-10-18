@@ -3,9 +3,9 @@
 //! Protocol researched from the MIT-licensed
 //! github.com/raulrojas22/Ha-CloudPlus-Meari-ANRAN
 //! custom_components/cloudplus/{api.py,const.py} on 2026-10-17.
-//! No production network transport or UI is wired to this module.
-//! An authorized HTTPS client must be reviewed before user credentials
-//! are accepted. This implementation never guesses account passwords,
+//! Production HTTPS is invoked only by a one-shot, consent-gated GUI action.
+//! Its community backend is unverified for the household camera, and a real
+//! login may disrupt an existing mobile session. Never guess passwords,
 //! exports headers, or stores credentials/tokens in the registry.
 
 use crate::meari_devices::{self, AuthorizedCatalog};
@@ -19,7 +19,7 @@ use des::Des;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
 use std::collections::BTreeMap;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const REDIRECT_ORIGIN: &str = "https://apis.cloudedge360.com";
 const REDIRECT_PATH: &str = "/ppstrongs/redirect";
@@ -47,14 +47,23 @@ pub struct WireRequest {
     pub headers: BTreeMap<String, String>,
 }
 
-/// An explicit transport boundary: the current application DOES NOT
-/// implement this trait with real HTTP requests.
+impl Drop for WireRequest {
+    fn drop(&mut self) {
+        // Best-effort cleanup of the request's own signed headers and form
+        // values. HTTP libraries may make additional transient copies.
+        for value in self.params.values_mut().chain(self.headers.values_mut()) {
+            value.zeroize();
+        }
+    }
+}
+
+/// Injectable transport boundary for synthetic tests and opt-in HTTPS.
 pub trait Exchange {
     fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError>;
 }
 
-/// Production HTTPS transport, intentionally not connected to an egui login
-/// control yet. Only verified HTTPS host families are permitted. No system
+/// Production HTTPS transport, invoked only on explicit GUI consent.
+/// Only allowlisted HTTPS host families are permitted. No system
 /// proxies, redirects, cookies, persistent sessions or account data on disk.
 pub struct HttpsExchange {
     agent: ureq::Agent,
@@ -180,7 +189,7 @@ pub trait Clock {
 
 struct Session {
     origin: String,
-    user_id: String,
+    user_id: Zeroizing<String>,
     token: Zeroizing<String>,
 }
 
@@ -381,7 +390,7 @@ fn device_request(
     stamp: Stamp,
 ) -> Result<WireRequest, AuthError> {
     let mut params = form_fields(&stamp, credentials)?;
-    params.insert("userID".into(), session.user_id.clone());
+    params.insert("userID".into(), session.user_id.as_str().to_owned());
     params.insert("funSwitch".into(), "1".into());
     sign_form(&mut params, &session.token);
     Ok(WireRequest {
@@ -393,12 +402,12 @@ fn device_request(
     })
 }
 
-/// Mockable, explicit account exchange. A production HTTPS transport and
-/// UI consent flow are intentionally absent. No automatic retries.
+/// Mockable, one-shot account exchange. The GUI owns explicit consent.
+/// No automatic retries or background requests.
 pub fn discover_account<T: Exchange, C: Clock>(
     transport: &mut T,
     clock: &mut C,
-    credentials: Credentials,
+    mut credentials: Credentials,
 ) -> Result<AuthorizedCatalog, AuthError> {
     if credentials.account.is_empty()
         || credentials.account.len() > 254
@@ -408,7 +417,10 @@ pub fn discover_account<T: Exchange, C: Clock>(
         return Err(AuthError::InvalidInput);
     }
 
-    let response = read_json(&transport.exchange(redirect_request(&credentials, clock.next())?)?)?;
+    let redirect_bytes =
+        Zeroizing::new(transport.exchange(redirect_request(&credentials, clock.next())?)?);
+    let response = read_json(&redirect_bytes)?;
+    drop(redirect_bytes);
     if !successful(&response) {
         return Err(AuthError::InvalidServer);
     }
@@ -418,11 +430,14 @@ pub fn discover_account<T: Exchange, C: Clock>(
         .ok_or(AuthError::InvalidServer)?;
     let origin = allowed_api_origin(server).ok_or(AuthError::InvalidServer)?;
 
-    let login = read_json(&transport.exchange(login_request(
-        &credentials,
-        origin.clone(),
-        clock.next(),
-    )?)?)?;
+    let login_request = login_request(&credentials, origin.clone(), clock.next())?;
+    // The plaintext account/password are no longer needed after constructing
+    // the login request; do not keep them for the device-list round trip.
+    credentials.account.zeroize();
+    credentials.password.zeroize();
+    let login_bytes = Zeroizing::new(transport.exchange(login_request)?);
+    let mut login = read_json(&login_bytes)?;
+    drop(login_bytes);
     if !successful(&login) {
         return Err(AuthError::LoginRejected);
     }
@@ -439,13 +454,25 @@ pub fn discover_account<T: Exchange, C: Clock>(
         .pointer("/result/userToken")
         .and_then(serde_json::Value::as_str)
         .filter(|t| !t.is_empty() && t.len() <= 2048)
-        .ok_or(AuthError::InvalidReply)?;
+        .ok_or(AuthError::InvalidReply)?
+        .to_owned();
+    // Erase the parsed response's direct copies of these private values.
+    if let Some(serde_json::Value::String(value)) = login.pointer_mut("/result/userID") {
+        value.zeroize();
+    }
+    if let Some(serde_json::Value::String(value)) = login.pointer_mut("/result/userToken") {
+        value.zeroize();
+    }
     let session = Session {
         origin,
-        user_id,
-        token: Zeroizing::new(token.into()),
+        user_id: Zeroizing::new(user_id),
+        token: Zeroizing::new(token),
     };
-    let raw = transport.exchange(device_request(&credentials, &session, clock.next())?)?;
+    let raw = Zeroizing::new(transport.exchange(device_request(
+        &credentials,
+        &session,
+        clock.next(),
+    )?)?);
     meari_devices::parse_authenticated_device_list(&raw).map_err(Into::into)
 }
 
@@ -566,6 +593,23 @@ mod tests {
         }
         assert!(allowed_api_origin("https://apis-usce.mearicloud.com").is_some());
     }
+    #[test]
+    fn invalid_region_never_reaches_any_transport() {
+        struct MustNotConnect;
+        impl Exchange for MustNotConnect {
+            fn exchange(&mut self, _: WireRequest) -> Result<Vec<u8>, AuthError> {
+                panic!("invalid user input must not reach HTTPS")
+            }
+        }
+        let mut invalid = account();
+        invalid.country = "mx".into();
+        let mut clock = TestClock { n: 0 };
+        assert!(matches!(
+            discover_account(&mut MustNotConnect, &mut clock, invalid),
+            Err(AuthError::InvalidInput)
+        ));
+    }
+
     #[test]
     fn reject_wrong_password_without_retry_or_device_request() {
         struct RejectLogin {

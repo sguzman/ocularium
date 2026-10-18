@@ -95,6 +95,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Mock-tested native ANRAN redirect → one-shot login → signed default device-list handshake with independent legacy crypto vectors
 - [x] Bounded TLS-verifying transport restricted to vendor HTTPS domains, with proxy/redirect disabled, no GUI connection or automatic requests
 - [x] Add a consent-gated, one-shot ANRAN account panel with masked transient fields and count-only results
+- [x] Test consent-to-worker handoff (no connection before consent; credential fields cleared once transferred); best-effort buffer zeroization
 - [ ] Extend ANRAN account discovery to shared homes and optional platform initialization
 - [ ] Build an opt-in, secure ANRAN account client that can verify an authenticated device list before trying streaming; keep credentials/tokens out of disk and logs
 - [ ] Verify ANRAN's exact account backend and device protocol prior to implementing any app authentication

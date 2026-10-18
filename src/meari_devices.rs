@@ -6,6 +6,7 @@
 
 use crate::meari_vvp::Transport;
 use std::collections::BTreeMap;
+use zeroize::Zeroize;
 
 const MAX_JSON_BYTES: usize = 512 * 1024;
 const MAX_RECORDS: usize = 64;
@@ -23,6 +24,25 @@ pub struct AuthorizedCamera {
     pub device_uuid: Option<String>,
     pub p2p_init: Option<String>,
     pub mac: Option<String>,
+}
+
+impl Drop for AuthorizedCamera {
+    fn drop(&mut self) {
+        // Only best-effort clearing of our owned buffers: parsers and network
+        // transports can allocate other temporary copies of response values.
+        self.device_id.zeroize();
+        self.serial.zeroize();
+        for field in [
+            &mut self.host_key,
+            &mut self.device_uuid,
+            &mut self.p2p_init,
+            &mut self.mac,
+        ] {
+            if let Some(value) = field.as_mut() {
+                value.zeroize();
+            }
+        }
+    }
 }
 
 impl AuthorizedCamera {
@@ -269,9 +289,12 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
     }
     let mut records = BTreeMap::new();
     collect(&value, None, 0, &mut records)?;
-    Ok(AuthorizedCatalog {
-        records: records.into_values().collect(),
-    })
+    let mut cameras = Vec::with_capacity(records.len());
+    for (mut key, record) in records {
+        key.zeroize();
+        cameras.push(record);
+    }
+    Ok(AuthorizedCatalog { records: cameras })
 }
 
 #[cfg(test)]

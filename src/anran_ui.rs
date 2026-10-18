@@ -88,9 +88,11 @@ impl AnranPanel {
             )
     }
 
-    fn start(&mut self) {
+    // Independent of transport: unit tests can prove that this gate never
+    // hands credentials to a worker without fresh, explicit consent.
+    fn take_consented_credentials(&mut self) -> Option<Credentials> {
         if !self.ready() {
-            return;
+            return None;
         }
         let credentials = Credentials {
             account: std::mem::replace(&mut self.account, Zeroizing::new(String::new())),
@@ -100,6 +102,13 @@ impl AnranPanel {
         };
         self.consent = false;
         self.result = None;
+        Some(credentials)
+    }
+
+    fn start(&mut self) {
+        let Some(credentials) = self.take_consented_credentials() else {
+            return;
+        };
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         thread::spawn(move || {
@@ -122,6 +131,7 @@ impl AnranPanel {
                     "A login may invalidate the mobile app session. Only use an account you control.",
                 );
                 ui.label("One request sequence, no automatic retries or saved credentials.");
+                ui.small("Country and dialing code must match the account registration region.");
                 let busy = self.busy();
                 ui.horizontal(|ui| {
                     ui.label("Country");
@@ -216,5 +226,52 @@ mod tests {
         assert!(panel.ready());
         panel.country = "mx".into();
         assert!(!panel.ready());
+    }
+
+    #[test]
+    fn no_consent_means_credentials_never_leave_the_form() {
+        let mut panel = AnranPanel {
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            ..Default::default()
+        };
+        assert!(panel.take_consented_credentials().is_none());
+        assert_eq!(panel.account.as_str(), "sample@example.invalid");
+        assert_eq!(panel.password.as_str(), "sample");
+        assert!(!panel.busy());
+    }
+
+    #[test]
+    fn authorized_credentials_are_taken_once_and_the_form_cleared() {
+        let mut panel = AnranPanel {
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            consent: true,
+            ..Default::default()
+        };
+        let credentials = panel.take_consented_credentials().unwrap();
+        assert_eq!(credentials.account.as_str(), "sample@example.invalid");
+        assert_eq!(credentials.password.as_str(), "sample");
+        assert!(panel.account.is_empty());
+        assert!(panel.password.is_empty());
+        assert!(!panel.consent);
+        assert!(panel.take_consented_credentials().is_none());
+        assert!(!panel.busy());
+    }
+
+    #[test]
+    fn busy_or_invalid_inputs_never_handoff_credentials() {
+        let mut panel = AnranPanel {
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            consent: true,
+            ..Default::default()
+        };
+        panel.dialing_code = "5x".into();
+        assert!(panel.take_consented_credentials().is_none());
+        panel.dialing_code = "52".into();
+        let (_sender, receiver) = mpsc::channel();
+        panel.rx = Some(receiver);
+        assert!(panel.take_consented_credentials().is_none());
     }
 }
