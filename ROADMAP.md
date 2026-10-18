@@ -92,6 +92,9 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Implement bounded, offline native Meari VVP command encoding / plaintext media framing / replay gating with synthetic tests; no network or credentials
 - [x] Require authoritative device-list transport field before selecting PPCS versus modern signaling (do not infer from platform b81)
 - [x] Offline bounded parsing of successful Meari camera device-list responses (default + shared homes), session-only transport/key data, redacted summaries, MAC-only correlation
+- [x] Mock-tested native ANRAN redirect → one-shot login → signed default device-list handshake with independent legacy crypto vectors
+- [x] Bounded TLS-verifying transport restricted to vendor HTTPS domains, with proxy/redirect disabled, no GUI connection or automatic requests
+- [ ] Extend ANRAN account discovery to shared homes, optional platform initialization, and explicit user consent before first live login
 - [ ] Build an opt-in, secure ANRAN account client that can verify an authenticated device list before trying streaming; keep credentials/tokens out of disk and logs
 - [ ] Verify ANRAN's exact account backend and device protocol prior to implementing any app authentication
 - [ ] Add real ANRAN video adapter without mandatory external server; do not infer compatibility from app branding alone
