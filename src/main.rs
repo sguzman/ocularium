@@ -15,6 +15,8 @@ mod meari_account;
 #[allow(dead_code)]
 mod meari_devices;
 #[allow(dead_code)]
+mod meari_ppcs;
+#[allow(dead_code)]
 mod meari_video;
 #[allow(dead_code)]
 mod meari_vvp;

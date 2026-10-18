@@ -46,6 +46,10 @@ Select a discovered device and click **Inspect advertised ONVIF** if it supplied
 
 Results distinguish no HTTP response, 401/403 authorization barriers, 404 missing endpoint, SOAP faults, and recognized ONVIF capability categories. If an ONVIF Media service URL is advertised, its hostname must match the selected device before the UI marks it as same-host. **Copy safe ONVIF diagnostic** and the discovery report contain status/capability evidence without raw service URLs or credentials. ONVIF advertising is not proof a stream is playable, and absence of an ONVIF reply is not proof of a cloud-only camera. This feature does not request stream URIs or decode video.
 
+## Offline legacy PPCS receive-side reassembly (not a camera connection)
+
+`src/meari_ppcs.rs` now models eight PPCS reliable channels and their legacy **32-byte media envelopes**, separate from VVP media framing. It bounds reorder buffering, suppresses duplicates, handles 16-bit sequence rollover, and reconstructs media frames from fragmented, already authenticated/decrypted reliable-channel bytes. Synthetic tests exercise fragmentation, reorder, invalid headers and reset behavior. It cannot contact a camera, authenticate/decrypt PPCS packets, choose the correct media channel, or stream video.
+
 ## Offline VVP video-to-CPU decoder (not a camera connection)
 
 `src/meari_video.rs` is a standalone Rust adapter for **already authorized, reassembled, plaintext** Meari VVP video packets. It validates Annex-B H.264/HEVC parameter sets, gates recovery on actual codec keyframes, rejects duplicate/out-of-order video and gaps until a new keyframe, bounds input, and feeds only codec bytes over stdin to a local CPU `ffmpeg` decoder for one transient 640 × 360 RGB frame. It never starts a network connection, chooses a camera, stores video, logs device identifiers, decrypts unknown payloads, or sends a URL to ffmpeg. The synthetic FFmpeg round-trip is automated when the optional local H.264 encoder exists. The adapter is **offline groundwork only**; no household live video, P2P authorization, transport reassembly, or decryption is implemented yet.
