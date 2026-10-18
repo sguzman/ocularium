@@ -46,6 +46,10 @@ Select a discovered device and click **Inspect advertised ONVIF** if it supplied
 
 Results distinguish no HTTP response, 401/403 authorization barriers, 404 missing endpoint, SOAP faults, and recognized ONVIF capability categories. If an ONVIF Media service URL is advertised, its hostname must match the selected device before the UI marks it as same-host. **Copy safe ONVIF diagnostic** and the discovery report contain status/capability evidence without raw service URLs or credentials. ONVIF advertising is not proof a stream is playable, and absence of an ONVIF reply is not proof of a cloud-only camera. This feature does not request stream URIs or decode video.
 
+## Offline PPCS packet codec (not an authenticated connection)
+
+`src/meari_ppcs_wire.rs` now implements the legacy PPCS 0xF1/type/big-endian-length packet envelope and the reference's reversible packet substitution cipher. It bounds datagrams, clears transient plaintext and derived state, and checks fixed wire vectors against the independently implemented reference. It can feed its decoded inner channel packets into the existing offline receiver. **This cipher is obfuscation, not authentication or integrity protection.** No real keys, peers, UDP sockets, network requests, or cameras are involved; future transport code must verify the authorized device/session and sender independently before interpreting these packets.
+
 ## Offline legacy PPCS receive-side reassembly (not a camera connection)
 
 `src/meari_ppcs.rs` now models eight PPCS reliable channels and their legacy **32-byte media envelopes**, separate from VVP media framing. It bounds reorder buffering, suppresses duplicates, handles 16-bit sequence rollover, and reconstructs media frames from fragmented, already authenticated/decrypted reliable-channel bytes. Synthetic tests exercise fragmentation, reorder, invalid headers and reset behavior. It cannot contact a camera, authenticate/decrypt PPCS packets, choose the correct media channel, or stream video.
