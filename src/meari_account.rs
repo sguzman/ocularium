@@ -1,0 +1,382 @@
+//! Offline, mockable ANRAN/Meari account handshake.
+//!
+//! Protocol researched from the MIT-licensed
+//! github.com/raulrojas22/Ha-CloudPlus-Meari-ANRAN
+//! custom_components/cloudplus/{api.py,const.py} on 2026-10-17.
+//! No production network transport or UI is wired to this module.
+//! An authorized HTTPS client must be reviewed before user credentials
+//! are accepted. This implementation never guesses account passwords,
+//! exports headers, or stores credentials/tokens in the registry.
+
+use std::collections::BTreeMap;
+use aes::Aes128;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use cbc::{cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit}, Encryptor};
+use des::Des;
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+use zeroize::Zeroizing;
+use crate::meari_devices::{self, AuthorizedCatalog};
+
+const REDIRECT_ORIGIN: &str = "https://apis.cloudedge360.com";
+const REDIRECT_PATH: &str = "/ppstrongs/redirect";
+const LOGIN_PATH: &str = "/meari/app/login";
+const DEVICE_PATH: &str = "/v1/app/device/info/get";
+const CA_KEY: &str = "bc29be30292a4309877807e101afbd51";
+const CA_SECRET: &str = "35a69fd1-6527-4566-b190-921f9a651488";
+const DES_KEY: &[u8; 8] = b"12345678";
+const DES_IV: &[u8; 8] = b"01234567";
+const MAX_RESPONSE: usize = 512 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Method { Get, Post }
+
+/// Do not implement Debug, Serialize, Display or log this type.
+/// Its params and headers can include encrypted credentials or tokens.
+pub struct WireRequest {
+    pub method: Method,
+    pub origin: String,
+    pub path: &'static str,
+    pub params: BTreeMap<String, String>,
+    pub headers: BTreeMap<String, String>,
+}
+
+/// An explicit transport boundary: the current application DOES NOT
+/// implement this trait with real HTTP requests.
+pub trait Exchange {
+    fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError>;
+}
+
+pub struct Credentials {
+    pub account: Zeroizing<String>,
+    pub password: Zeroizing<String>,
+    pub country: String,
+    pub phone_code: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthError {
+    InvalidInput,
+    InvalidServer,
+    InvalidReply,
+    LoginRejected,
+    DeviceListRejected,
+    Transport,
+}
+impl From<meari_devices::CatalogError> for AuthError {
+    fn from(_: meari_devices::CatalogError) -> Self { Self::DeviceListRejected }
+}
+
+pub struct Stamp {
+    pub epoch_ms: i64,
+    pub nonce: String,
+}
+
+/// Every request gets a fresh nonce from the caller, never a hard-coded one.
+pub trait Clock {
+    fn next(&mut self) -> Stamp;
+}
+
+struct Session {
+    origin: String,
+    user_id: String,
+    token: Zeroizing<String>,
+}
+
+fn allowed_api_origin(input: &str) -> Option<String> {
+    let hostname = input.strip_prefix("https://")?;
+    // No cleartext, non-default ports, IP literals, credentials, subpaths,
+    // query strings, fragments, or unknown API origins. No DNS calls here.
+    if hostname.len() > 120 || hostname.is_empty() || !hostname.is_ascii()
+        || hostname.contains(['/', ':', '@', '?', '#', '[', ']'])
+        || hostname.starts_with('.') || hostname.ends_with('.')
+        || hostname.split('.').any(|part| part.is_empty() ||
+            !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
+    {
+        return None;
+    }
+    if !["mearicloud.com", "cloudedge360.com", "meari.com.cn"]
+        .iter().any(|root| hostname == *root || hostname.ends_with(&format!(".{root}")))
+    {
+        return None;
+    }
+    Some(input.to_string())
+}
+
+fn hmac_b64(key: &str, text: &str) -> String {
+    let mut signer = Hmac::<Sha1>::new_from_slice(key.as_bytes()).expect("HMAC accepts any key size");
+    signer.update(text.as_bytes());
+    BASE64.encode(signer.finalize().into_bytes())
+}
+
+fn user_account_cipher(account: &str, path: &str, millis: i64) -> Result<String, AuthError> {
+    // Reproduces the reference app's AES-CBC userAccount field. Legacy cipher
+    // is a compatibility requirement, not modern password-storage guidance.
+    let raw = format!("{path}84a{millis}");
+    let b64 = BASE64.encode(raw.as_bytes());
+    let key = b64.as_bytes().get(..16).ok_or(AuthError::InvalidInput)?;
+    let encrypted = Encryptor::<Aes128>::new_from_slices(key, key)
+        .map_err(|_| AuthError::InvalidInput)?
+        .encrypt_padded_vec_mut::<Pkcs7>(account.as_bytes());
+    Ok(BASE64.encode(encrypted))
+}
+
+fn password_cipher(password: &str) -> String {
+    let encrypted = Encryptor::<Des>::new(DES_KEY.into(), DES_IV.into())
+        .encrypt_padded_vec_mut::<Pkcs7>(password.as_bytes());
+    BASE64.encode(encrypted)
+}
+
+fn ca_headers(path: &str, stamp: &Stamp, token: Option<&str>) -> Result<BTreeMap<String, String>, AuthError> {
+    if stamp.epoch_ms <= 0 || stamp.nonce.len() < 6 || stamp.nonce.len() > 36
+        || !stamp.nonce.bytes().all(|b| b.is_ascii_alphanumeric())
+    {
+        return Err(AuthError::InvalidInput);
+    }
+    let millis = stamp.epoch_ms.to_string();
+    let (ca_key, secret) = token.map_or((CA_KEY, CA_SECRET), |t| (t, t));
+    let to_sign = format!(
+        "api=/ppstrongs/{path}|X-Ca-Key={ca_key}|X-Ca-Timestamp={millis}|X-Ca-Nonce={}",
+        stamp.nonce
+    );
+    Ok(BTreeMap::from([
+        ("X-Ca-Timestamp".into(), millis),
+        ("X-Ca-Key".into(), ca_key.into()),
+        ("X-Ca-Nonce".into(), stamp.nonce.clone()),
+        ("X-Ca-Sign".into(), hmac_b64(secret, &to_sign)),
+    ]))
+}
+
+fn form_fields(stamp: &Stamp, credentials: &Credentials) -> Result<BTreeMap<String, String>, AuthError> {
+    if credentials.country.len() != 2 || !credentials.country.bytes().all(|b| b.is_ascii_uppercase())
+        || credentials.phone_code.is_empty() || credentials.phone_code.len() > 4
+        || !credentials.phone_code.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(AuthError::InvalidInput);
+    }
+    // Timestamp rendered in UTC explicitly. The reference uses local GMT
+    // offsets; server compatibility will need hardware validation.
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(stamp.epoch_ms)
+        .ok_or(AuthError::InvalidInput)?;
+    let time = format!("{}GMT+00:00", dt.format("%Y-%m-%dT%H:%M:%S%.3f"));
+    Ok(BTreeMap::from([
+        ("phoneType".into(), "i".into()),
+        ("sourceApp".into(), "84".into()),
+        ("appVer".into(), "6.2.0".into()),
+        ("appVerCode".into(), "2026071016".into()),
+        ("countryCode".into(), credentials.country.clone()),
+        ("phoneCode".into(), credentials.phone_code.clone()),
+        ("lngType".into(), "es".into()),
+        ("t".into(), stamp.epoch_ms.to_string()),
+        ("localTime".into(), stamp.epoch_ms.to_string()),
+        ("timestamp".into(), time),
+        ("signatureMethod".into(), "HMAC-SHA1".into()),
+        ("signatureVersion".into(), "1.0".into()),
+        ("signatureNonce".into(), stamp.epoch_ms.to_string()),
+    ]))
+}
+
+fn read_json(bytes: &[u8]) -> Result<serde_json::Value, AuthError> {
+    if bytes.len() > MAX_RESPONSE { return Err(AuthError::InvalidReply); }
+    serde_json::from_slice(bytes).map_err(|_| AuthError::InvalidReply)
+}
+
+fn successful(value: &serde_json::Value) -> bool {
+    value.get("resultCode").and_then(serde_json::Value::as_str) == Some("1001")
+}
+
+fn sign_form(fields: &mut BTreeMap<String, String>, token: &str) {
+    let joined = fields.iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>().join("&");
+    fields.insert("signature".into(), hmac_b64(token, &joined));
+}
+
+fn redirect_request(credentials: &Credentials, stamp: Stamp) -> Result<WireRequest, AuthError> {
+    let mut params = form_fields(&stamp, credentials)?;
+    params.remove("timestamp");
+    params.remove("signatureMethod");
+    params.remove("signatureVersion");
+    params.remove("signatureNonce");
+    params.insert("nonce".into(), stamp.nonce.clone());
+    params.insert("partnerId".into(), "84".into());
+    params.insert("sign".into(), format!(
+        "{:x}", md5::compute(format!("GET|{REDIRECT_PATH}|{}|apis.meari.com.cn", stamp.epoch_ms))
+    ));
+    params.insert("userAccount".into(),
+        user_account_cipher(&credentials.account, REDIRECT_PATH, stamp.epoch_ms)?);
+    Ok(WireRequest {
+        method: Method::Get,
+        origin: REDIRECT_ORIGIN.into(),
+        path: REDIRECT_PATH,
+        params,
+        headers: ca_headers(REDIRECT_PATH, &stamp, None)?,
+    })
+}
+
+fn login_request(credentials: &Credentials, origin: String, stamp: Stamp) -> Result<WireRequest, AuthError> {
+    let mut params = form_fields(&stamp, credentials)?;
+    for key in ["timestamp","signatureMethod","signatureVersion","signatureNonce"] {
+        params.remove(key);
+    }
+    params.insert("userAccount".into(),
+        user_account_cipher(&credentials.account, LOGIN_PATH, stamp.epoch_ms)?);
+    params.insert("password".into(), password_cipher(&credentials.password));
+    params.insert("iotType".into(), "4".into());
+    params.insert("equipmentNo".into(), " ".into());
+    Ok(WireRequest {
+        method: Method::Post, origin, path: LOGIN_PATH, params,
+        headers: ca_headers(LOGIN_PATH, &stamp, None)?,
+    })
+}
+
+fn device_request(credentials: &Credentials, session: &Session, stamp: Stamp) -> Result<WireRequest, AuthError> {
+    let mut params = form_fields(&stamp, credentials)?;
+    params.insert("userID".into(), session.user_id.clone());
+    params.insert("funSwitch".into(), "1".into());
+    sign_form(&mut params, &session.token);
+    Ok(WireRequest {
+        method: Method::Post, origin: session.origin.clone(),
+        path: DEVICE_PATH, params,
+        headers: ca_headers(DEVICE_PATH, &stamp, Some(&session.token))?,
+    })
+}
+
+/// Mockable, explicit account exchange. A production HTTPS transport and
+/// UI consent flow are intentionally absent. No automatic retries.
+pub fn discover_account<T: Exchange, C: Clock>(
+    transport: &mut T, clock: &mut C, credentials: Credentials,
+) -> Result<AuthorizedCatalog, AuthError> {
+    if credentials.account.is_empty() || credentials.account.len() > 254
+        || credentials.password.is_empty() || credentials.password.len() > 256
+    {
+        return Err(AuthError::InvalidInput);
+    }
+
+    let response = read_json(&transport.exchange(redirect_request(&credentials, clock.next())?)?)?;
+    if !successful(&response) { return Err(AuthError::InvalidServer); }
+    let server = response.pointer("/result/apiServer")
+        .and_then(serde_json::Value::as_str).ok_or(AuthError::InvalidServer)?;
+    let origin = allowed_api_origin(server).ok_or(AuthError::InvalidServer)?;
+
+    let login = read_json(&transport.exchange(login_request(&credentials, origin.clone(), clock.next())?)?)?;
+    if !successful(&login) { return Err(AuthError::LoginRejected); }
+    let user_id = login.pointer("/result/userID").and_then(|v| match v {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }).filter(|id| id.len() <= 64).ok_or(AuthError::InvalidReply)?;
+    let token = login.pointer("/result/userToken")
+        .and_then(serde_json::Value::as_str)
+        .filter(|t| !t.is_empty() && t.len() <= 2048)
+        .ok_or(AuthError::InvalidReply)?;
+    let session = Session { origin, user_id, token: Zeroizing::new(token.into()) };
+    let raw = transport.exchange(device_request(&credentials, &session, clock.next())?)?;
+    meari_devices::parse_authenticated_device_list(&raw).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestClock { n: u32 }
+    impl Clock for TestClock {
+        fn next(&mut self) -> Stamp {
+            self.n += 1;
+            Stamp { epoch_ms: 1_700_000_000_000, nonce: format!("12345{}", self.n) }
+        }
+    }
+    fn account() -> Credentials {
+        Credentials {
+            account: Zeroizing::new("test@example.com".into()),
+            password: Zeroizing::new("example-password".into()),
+            country: "MX".into(), phone_code: "52".into(),
+        }
+    }
+    struct Fixture { calls: usize }
+    impl Exchange for Fixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            assert!(!request.origin.contains("http://"));
+            match self.calls {
+                1 => {
+                    assert_eq!(request.origin, REDIRECT_ORIGIN);
+                    assert_eq!(request.path, REDIRECT_PATH);
+                    assert_eq!(request.method, Method::Get);
+                    assert_eq!(request.params.get("partnerId").unwrap(), "84");
+                    assert_eq!(request.params.get("userAccount").unwrap(),
+                        "pIwr3RCVc8chOlAEBnyveA1ESpEe2nXQzt/cyX5oQ7I=");
+                    assert_eq!(request.params.get("sign").unwrap(),
+                        "854295bbabb44a0df2f72dcebaa3d524");
+                    Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#.to_vec())
+                }
+                2 => {
+                    assert_eq!(request.path, LOGIN_PATH);
+                    assert_eq!(request.method, Method::Post);
+                    assert_eq!(request.params.get("password").unwrap(), "Xtdq1G25Pq72SreiGApiyOkjhlOYCWX4");
+                    Ok(br#"{"resultCode":"1001","result":{"userID":123,"userToken":"fixture-secret-token"}}"#.to_vec())
+                }
+                3 => {
+                    assert_eq!(request.path, DEVICE_PATH);
+                    assert_eq!(request.method, Method::Post);
+                    assert!(request.headers.get("X-Ca-Key").unwrap() == "fixture-secret-token");
+                    assert!(request.params.contains_key("signature"));
+                    Ok(br#"{"resultCode":"1001","result":{"ipc":[{"deviceID":1,"snNum":"FAKE-DEVICE","deviceP2P":"ppcs"}]}}"#.to_vec())
+                }
+                _ => panic!("Unexpected network request"),
+            }
+        }
+    }
+    #[test]
+    fn three_request_anran_handshake_with_no_retry_or_storage() {
+        let mut transport = Fixture { calls: 0 };
+        let mut clock = TestClock { n: 0 };
+        let catalog = discover_account(&mut transport, &mut clock, account()).unwrap();
+        assert_eq!(catalog.summary().cameras, 1);
+        assert_eq!(catalog.summary().ppcs, 1);
+        assert_eq!(transport.calls, 3);
+    }
+    #[test]
+    fn known_answer_crypto_vectors_match_independent_implementation() {
+        let t = Stamp { epoch_ms: 1_700_000_000_000, nonce: "123456".into() };
+        assert_eq!(user_account_cipher("test@example.com", REDIRECT_PATH, t.epoch_ms).unwrap(),
+            "pIwr3RCVc8chOlAEBnyveA1ESpEe2nXQzt/cyX5oQ7I=");
+        assert_eq!(password_cipher("example-password"), "Xtdq1G25Pq72SreiGApiyOkjhlOYCWX4");
+        assert_eq!(ca_headers(REDIRECT_PATH, &t, None).unwrap().get("X-Ca-Sign").unwrap(),
+            "uM2XgqVtuV2K7LzG7O8Uo051zB4=");
+    }
+    #[test]
+    fn reject_non_allowlisted_redirect_origins() {
+        for url in [
+            "http://apis-usce.mearicloud.com", "https://8.8.8.8",
+            "https://apis-usce.mearicloud.com.evil.org",
+            "https://user@apis-usce.mearicloud.com",
+            "https://apis-usce.mearicloud.com:443",
+            "https://apis-usce.mearicloud.com/redirect",
+            "https://127.0.0.1",
+            "https://evil.com",
+        ] {
+            assert!(allowed_api_origin(url).is_none(), "unsafe redirect must be denied");
+        }
+        assert!(allowed_api_origin("https://apis-usce.mearicloud.com").is_some());
+    }
+    #[test]
+    fn reject_wrong_password_without_retry_or_device_request() {
+        struct RejectLogin { requests: usize }
+        impl Exchange for RejectLogin {
+            fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+                self.requests += 1;
+                match request.path {
+                    REDIRECT_PATH => Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#.to_vec()),
+                    LOGIN_PATH => Ok(br#"{"resultCode":"1002","resultMsg":"private details ignored"}"#.to_vec()),
+                    _ => panic!("No device requests permitted after rejected login"),
+                }
+            }
+        }
+        let mut mock = RejectLogin { requests: 0 };
+        let mut clock = TestClock { n: 0 };
+        assert!(matches!(discover_account(&mut mock, &mut clock, account()),
+            Err(AuthError::LoginRejected)));
+        assert_eq!(mock.requests, 2);
+    }
+}
