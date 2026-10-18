@@ -179,6 +179,20 @@ impl Registry {
         rows
     }
 
+    /// Ephemeral local-only MAC snapshot for a one-shot ANRAN account test.
+    /// Only user-identified ANRAN profiles on the selected LAN are included.
+    /// Never infer membership from a model, IP, or a different app label.
+    /// Retain None entries so the UI can report inconclusive saved profiles.
+    pub fn anran_mac_snapshot(&self, scope: &Scope) -> Vec<Option<String>> {
+        self.camera_profiles_for_scope(scope)
+            .into_iter()
+            .filter(|profile| {
+                profile.app == CameraApp::Anran && profile.role != CameraRole::NotCamera
+            })
+            .map(|profile| profile.mac.clone())
+            .collect()
+    }
+
     pub fn set_camera_profile(
         &mut self,
         scope: &Scope,
@@ -320,6 +334,38 @@ mod tests {
         );
         assert!(registry.camera_profile(&b, &moved).is_none());
         assert_eq!(registry.camera_profiles_for_scope(&a).len(), 1);
+    }
+
+    #[test]
+    fn anran_snapshot_is_scoped_and_excludes_other_apps_and_non_cameras() {
+        let a = scope([192, 168, 0]);
+        let b = scope([192, 168, 1]);
+        let mut registry = Registry::default();
+        let mut record = |ip: u8, app: CameraApp, role: CameraRole, mac: Option<&str>| {
+            let device = Device::new(Ipv4Addr::new(192, 168, 0, ip));
+            let identity = format!("test-{ip}");
+            registry.camera_profiles.insert(
+                identity.clone(),
+                CameraProfile {
+                    scope: history::scope_id(&a),
+                    identity,
+                    last_ip: device.ip,
+                    mac: mac.map(str::to_owned),
+                    role,
+                    app,
+                    metadata: CameraMetadata::default(),
+                },
+            );
+        };
+        record(10, CameraApp::Anran, CameraRole::Unreviewed, Some("02:ab:cd:12:34:56"));
+        record(11, CameraApp::Anran, CameraRole::UserConfirmed, None);
+        record(12, CameraApp::VicoHome, CameraRole::UserConfirmed, Some("02:ab:cd:12:34:57"));
+        record(13, CameraApp::Anran, CameraRole::NotCamera, Some("02:ab:cd:12:34:58"));
+        assert_eq!(
+            registry.anran_mac_snapshot(&a),
+            vec![Some("02:ab:cd:12:34:56".into()), None]
+        );
+        assert!(registry.anran_mac_snapshot(&b).is_empty());
     }
 
     #[test]

@@ -7,11 +7,11 @@ use std::{
 };
 
 use eframe::egui;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     meari_account::{self, AuthError, Credentials},
-    meari_devices::CatalogSummary,
+    meari_devices::{CatalogCorrelation, CatalogSummary},
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,6 +53,14 @@ impl PairedApp {
     }
 }
 
+/// Only counts cross the worker boundary. No account IDs, MACs, device
+/// keys, network addresses, or raw server responses reach this UI.
+#[derive(Clone, Copy)]
+struct DiscoveryReport {
+    catalog: CatalogSummary,
+    correlation: CatalogCorrelation,
+}
+
 pub struct AnranPanel {
     account: Zeroizing<String>,
     password: Zeroizing<String>,
@@ -61,8 +69,8 @@ pub struct AnranPanel {
     paired_app: PairedApp,
     camera_listed_in_app: bool,
     consent: bool,
-    rx: Option<Receiver<Result<CatalogSummary, AuthError>>>,
-    result: Option<Result<CatalogSummary, AuthError>>,
+    rx: Option<Receiver<Result<DiscoveryReport, AuthError>>>,
+    result: Option<Result<DiscoveryReport, AuthError>>,
 }
 
 impl Default for AnranPanel {
@@ -163,10 +171,13 @@ impl AnranPanel {
         Some(credentials)
     }
 
-    fn start(&mut self) {
+    fn start(&mut self, saved_macs: &[Option<String>]) {
         let Some(credentials) = self.take_consented_credentials() else {
             return;
         };
+        // Local-only selected-scope registry snapshot. It is never passed to
+        // Exchange or included in its HTTP request headers or form fields.
+        let mut saved_macs = saved_macs.to_vec();
         let (tx, rx) = mpsc::channel();
         self.rx = Some(rx);
         thread::spawn(move || {
@@ -175,12 +186,19 @@ impl AnranPanel {
                 &mut meari_account::SystemClock,
                 credentials,
             )
-            .map(|catalog| catalog.summary());
+            .map(|catalog| DiscoveryReport {
+                catalog: catalog.summary(),
+                correlation: catalog.correlate_saved_macs(&saved_macs),
+            });
+            for mac in saved_macs.iter_mut().flatten() {
+                mac.zeroize();
+            }
+            // Only aggregate counts or a fixed error code cross into the UI.
             let _ = tx.send(result);
         });
     }
 
-    pub fn ui(&mut self, ui: &mut egui::Ui) {
+    pub fn ui(&mut self, ui: &mut egui::Ui, saved_macs: &[Option<String>]) {
         egui::CollapsingHeader::new("ANRAN account discovery (experimental)")
             .default_open(false)
             .show(ui, |ui| {
@@ -230,6 +248,10 @@ impl AnranPanel {
                     return;
                 }
                 ui.separator();
+                ui.small(format!(
+                    "Saved ANRAN records in the selected LAN scope: {}.                      MAC correlation is local-only and cannot prove video access.",
+                    saved_macs.len()
+                ));
                 ui.horizontal(|ui| {
                     ui.label("Country");
                     ui.add_enabled(
@@ -274,7 +296,7 @@ impl AnranPanel {
                         )
                         .clicked()
                     {
-                        self.start();
+                        self.start(saved_macs);
                     }
                     if ui
                         .add_enabled(!busy, egui::Button::new("Clear credentials and result"))
@@ -292,8 +314,12 @@ impl AnranPanel {
                 }
                 if let Some(result) = self.result {
                     match result {
-                        Ok(counts) => {
-                            ui.label(counts.safe_text());
+                        Ok(report) => {
+                            ui.label(report.catalog.safe_text());
+                            ui.label(report.correlation.safe_text());
+                            ui.small(
+                                "No match is inconclusive: vendor lists often omit MACs,                                  and saved cameras may have a different app label.",
+                            );
                             ui.label(
                                 "Device IDs, keys and access tokens were not retained in the UI.",
                             );

@@ -6,7 +6,7 @@
 
 use crate::meari_vvp::Transport;
 use std::collections::BTreeMap;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const MAX_JSON_BYTES: usize = 512 * 1024;
 const MAX_RECORDS: usize = 64;
@@ -91,6 +91,35 @@ impl CatalogSummary {
     }
 }
 
+/// Aggregate-only local correlation, with no device identifiers or MACs.
+///
+/// A unique normalized MAC on each side is the only accepted link. A missing
+/// MAC, a duplicated MAC, a shared model, or an IP address never establishes
+/// that two device records refer to the same camera.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CatalogCorrelation {
+    pub saved_records: usize,
+    pub exact_unique_matches: usize,
+    pub ambiguous_macs: usize,
+    pub saved_without_mac: usize,
+    pub saved_not_matched: usize,
+    pub cloud_without_mac: usize,
+}
+
+impl CatalogCorrelation {
+    pub fn safe_text(self) -> String {
+        format!(
+            "Local ANRAN inventory comparison: {} saved records; {} unique MAC matches;              {} ambiguous MAC groups; {} saved records without valid MAC;              {} saved records without a cloud MAC match; {} cloud cameras without valid MAC.              No identity or video access is proven by this comparison.",
+            self.saved_records,
+            self.exact_unique_matches,
+            self.ambiguous_macs,
+            self.saved_without_mac,
+            self.saved_not_matched,
+            self.cloud_without_mac
+        )
+    }
+}
+
 /// Never derive Debug or Serialize on this type. Account records may contain
 /// ephemeral host keys and transport bootstrap material.
 pub struct AuthorizedCatalog {
@@ -104,6 +133,49 @@ impl AuthorizedCatalog {
 
     pub fn by_mac(&self, mac: &str) -> Option<&AuthorizedCamera> {
         self.records.iter().find(|camera| camera.matches_mac(mac))
+    }
+
+    /// Compare only against saved, user-identified ANRAN cameras from the
+    /// selected local scope. Nothing is sent to any vendor by this function.
+    /// The returned object contains counts only; all normalized MAC copies
+    /// use zeroizing buffers and are dropped on return.
+    pub fn correlate_saved_macs(&self, saved: &[Option<String>]) -> CatalogCorrelation {
+        let mut comparison = CatalogCorrelation {
+            saved_records: saved.len(),
+            cloud_without_mac: self.records.iter().filter(|cam| cam.mac.is_none()).count(),
+            ..Default::default()
+        };
+        let mut normalized: Vec<Zeroizing<String>> = Vec::new();
+        for entry in saved {
+            if let Some(mac) = entry.as_deref().and_then(normalize_mac) {
+                normalized.push(Zeroizing::new(mac));
+            } else {
+                comparison.saved_without_mac += 1;
+            }
+        }
+        for (index, mac) in normalized.iter().enumerate() {
+            if normalized[..index]
+                .iter()
+                .any(|previous| previous.as_str() == mac.as_str())
+            {
+                continue;
+            }
+            let local_count = normalized
+                .iter()
+                .filter(|candidate| candidate.as_str() == mac.as_str())
+                .count();
+            let cloud_count = self
+                .records
+                .iter()
+                .filter(|camera| camera.mac.as_deref() == Some(mac.as_str()))
+                .count();
+            match (local_count, cloud_count) {
+                (_, 0) => comparison.saved_not_matched += local_count,
+                (1, 1) => comparison.exact_unique_matches += 1,
+                _ => comparison.ambiguous_macs += 1,
+            }
+        }
+        comparison
     }
 
     pub fn summary(&self) -> CatalogSummary {
@@ -342,6 +414,80 @@ mod tests {
         ] {
             assert!(!report.contains(secret));
         }
+    }
+
+    #[test]
+    fn local_cloud_correlation_requires_unique_mac_on_both_sides() {
+        let raw = br#"{"resultCode":"1001","result":{"ipc":[
+          {"deviceID":"cam-a","snNum":"a","mac":"02:ab:cd:12:34:56","deviceP2P":"ppcs"},
+          {"deviceID":"cam-b","snNum":"b","mac":"02:ab:cd:12:34:57"},
+          {"deviceID":"cam-c","snNum":"c","model":"b81","ip":"192.0.2.4"}
+        ]}}"#;
+        let catalog = parse_authenticated_device_list(raw).unwrap();
+        let saved = vec![
+            Some("02:AB:CD:12:34:56".into()),
+            Some("02:ab:cd:12:34:58".into()),
+            None,
+            Some("ff:ff:ff:ff:ff:ff".into()),
+        ];
+        let counts = catalog.correlate_saved_macs(&saved);
+        assert_eq!(
+            counts,
+            CatalogCorrelation {
+                saved_records: 4,
+                exact_unique_matches: 1,
+                ambiguous_macs: 0,
+                saved_without_mac: 2,
+                saved_not_matched: 1,
+                cloud_without_mac: 1,
+            }
+        );
+        let report = counts.safe_text();
+        for private in [
+            "02:ab:cd:12:34:56",
+            "02:ab:cd:12:34:58",
+            "cam-a",
+            "b81",
+            "192.0.2.4",
+        ] {
+            assert!(!report.contains(private));
+        }
+    }
+
+    #[test]
+    fn duplicated_mac_on_either_side_is_ambiguous_not_a_match() {
+        let raw = br#"{"resultCode":"1001","result":{"ipc":[
+          {"deviceID":"cam-a","snNum":"a","mac":"02:ab:cd:12:34:56"},
+          {"deviceID":"cam-b","snNum":"b","mac":"02:ab:cd:12:34:56"},
+          {"deviceID":"cam-c","snNum":"c","mac":"02:ab:cd:12:34:57"}
+        ]}}"#;
+        let catalog = parse_authenticated_device_list(raw).unwrap();
+        let saved = vec![
+            Some("02:ab:cd:12:34:56".into()),
+            Some("02:ab:cd:12:34:57".into()),
+            Some("02:ab:cd:12:34:57".into()),
+        ];
+        let counts = catalog.correlate_saved_macs(&saved);
+        assert_eq!(counts.exact_unique_matches, 0);
+        assert_eq!(counts.ambiguous_macs, 2);
+        assert_eq!(counts.saved_not_matched, 0);
+    }
+
+    #[test]
+    fn empty_local_inventory_never_implies_incompatible_backend() {
+        let catalog = parse_authenticated_device_list(
+            br#"{"resultCode":"1001","result":{"ipc":[
+                {"deviceID":"a","snNum":"b","mac":"02:ab:cd:12:34:56"}
+            ]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            catalog.correlate_saved_macs(&[]),
+            CatalogCorrelation {
+                saved_records: 0,
+                ..Default::default()
+            }
+        );
     }
 
     #[test]

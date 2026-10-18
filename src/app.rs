@@ -2159,7 +2159,12 @@ impl eframe::App for OculariumApp {
                 }
                 ui.add_space(12.0);
                 self.camera_inventory_panel(ui);
-                self.anran.ui(ui);
+                let saved_anran_macs = self
+                    .scopes
+                    .get(self.selected_scope)
+                    .map(|scope| self.registry.anran_mac_snapshot(scope))
+                    .unwrap_or_default();
+                self.anran.ui(ui, &saved_anran_macs);
                 self.saved_camera_editor(ui);
                 self.devices_panel(ui);
                 self.details_panel(ui);
