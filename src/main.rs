@@ -10,6 +10,8 @@ mod local_stream;
 // Protocol groundwork has intentionally no network integration yet.
 mod mdns;
 #[allow(dead_code)]
+mod meari_account;
+#[allow(dead_code)]
 mod meari_devices;
 #[allow(dead_code)]
 mod meari_vvp;
