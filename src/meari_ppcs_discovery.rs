@@ -23,10 +23,9 @@ const MAX_OFFERS: usize = 32;
 const PUNCH_RADIUS: u16 = 3;
 
 const INIT_SEED: [u8; 54] = [
-    0x49, 0x59, 0x43, 0x3d, 0xb5, 0xbf, 0x6d, 0xa3, 0x47, 0x53, 0x4f, 0x61,
-    0x65, 0xe3, 0x71, 0xe9, 0x67, 0x7f, 0x02, 0x03, 0x0b, 0xad, 0xb3, 0x89,
-    0x2b, 0x2f, 0x35, 0xc1, 0x6b, 0x8b, 0x95, 0x97, 0x11, 0xe5, 0xa7, 0x0d,
-    0xef, 0xf1, 0x05, 0x07, 0x83, 0xfb, 0x9d, 0x3b, 0xc5, 0xc7, 0x13, 0x17,
+    0x49, 0x59, 0x43, 0x3d, 0xb5, 0xbf, 0x6d, 0xa3, 0x47, 0x53, 0x4f, 0x61, 0x65, 0xe3, 0x71, 0xe9,
+    0x67, 0x7f, 0x02, 0x03, 0x0b, 0xad, 0xb3, 0x89, 0x2b, 0x2f, 0x35, 0xc1, 0x6b, 0x8b, 0x95, 0x97,
+    0x11, 0xe5, 0xa7, 0x0d, 0xef, 0xf1, 0x05, 0x07, 0x83, 0xfb, 0x9d, 0x3b, 0xc5, 0xc7, 0x13, 0x17,
     0x1d, 0x1f, 0x25, 0x29, 0xd3, 0xdf,
 ];
 
@@ -61,10 +60,7 @@ impl Drop for PpcsDeviceIdentity {
 impl PpcsDeviceIdentity {
     pub fn from_factory_uuid(uuid: &str) -> Result<Self, DiscoveryError> {
         let uuid = uuid.trim();
-        if uuid.len() < 2
-            || uuid.len() > MAX_UUID_TEXT
-            || !uuid.is_ascii()
-            || !uuid.ends_with('B')
+        if uuid.len() < 2 || uuid.len() > MAX_UUID_TEXT || !uuid.is_ascii() || !uuid.ends_with('B')
         {
             return Err(DiscoveryError::InvalidDeviceUuid);
         }
@@ -158,7 +154,10 @@ impl PpcsDeviceInit {
             if !valid_root_hostname(hostname) {
                 return Err(DiscoveryError::InvalidRoot);
             }
-            if roots.iter().any(|value: &Zeroizing<String>| value.as_str() == hostname) {
+            if roots
+                .iter()
+                .any(|value: &Zeroizing<String>| value.as_str() == hostname)
+            {
                 continue;
             }
             if roots.len() >= MAX_ROOTS {
@@ -311,8 +310,7 @@ impl PpcsRendezvousPreflight {
         // Restrict our preflight to a previously offered IP and the bounded
         // 3-port hole-punch radius. Still NOT cryptographic authentication.
         let offered = self.offered.iter().any(|offered| {
-            offered.ip() == from.ip()
-                && offered.port().abs_diff(from.port()) <= PUNCH_RADIUS
+            offered.ip() == from.ip() && offered.port().abs_diff(from.port()) <= PUNCH_RADIUS
         });
         if !offered {
             return PeerObservation::Ignored;
@@ -340,8 +338,7 @@ mod tests {
     const UUID: &str = "01-BCDEF-23B";
     // Independently generated from the pinned Python decode algorithm:
     // relay.example,198.51.100.9; the key is fictitious.
-    const INIT: &str =
-        "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
+    const INIT: &str = "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
 
     #[test]
     fn factory9_uuid_known_vector_builds_expected_twenty_byte_identity() {
@@ -392,8 +389,8 @@ mod tests {
             "not-an-init",
             "abcd:",
             "a:secret",
-             "00:secret",
-             "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:",
+            "00:secret",
+            "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:",
             "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:bad\nkey",
         ] {
             assert!(PpcsDeviceInit::from_device_init(invalid).is_err());
@@ -417,11 +414,7 @@ mod tests {
             .decode_obfuscated(wire_offer.as_bytes())
             .unwrap();
         assert_eq!(
-            preflight.observe_plaintext_packet(
-                root,
-                decoded_offer.kind(),
-                decoded_offer.payload()
-            ),
+            preflight.observe_plaintext_packet(root, decoded_offer.kind(), decoded_offer.payload()),
             PeerObservation::RootOffer
         );
 
@@ -431,11 +424,7 @@ mod tests {
             .decode_obfuscated(wire_reply.as_bytes())
             .unwrap();
         assert_eq!(
-            preflight.observe_plaintext_packet(
-                peer,
-                decoded_reply.kind(),
-                decoded_reply.payload()
-            ),
+            preflight.observe_plaintext_packet(peer, decoded_reply.kind(), decoded_reply.payload()),
             PeerObservation::PeerResponse
         );
         // No peer-authentication or video-transport operation occurred.
