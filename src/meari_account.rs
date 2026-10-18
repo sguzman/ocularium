@@ -211,9 +211,7 @@ impl ListOutcome {
 
 fn device_list_outcome(error: meari_devices::CatalogError) -> ListOutcome {
     match error {
-        meari_devices::CatalogError::TemporarilyUnavailable => {
-            ListOutcome::TemporarilyUnavailable
-        }
+        meari_devices::CatalogError::TemporarilyUnavailable => ListOutcome::TemporarilyUnavailable,
         meari_devices::CatalogError::NotAuthenticated => ListOutcome::Rejected,
         _ => ListOutcome::Malformed,
     }
@@ -691,11 +689,13 @@ struct HomeIds {
 fn parse_home_ids(bytes: &[u8]) -> Result<HomeIds, ListOutcome> {
     let result = read_json(bytes).map_err(|_| ListOutcome::Malformed)?;
     if !successful(&result) {
-        return Err(if result.get("resultCode").and_then(serde_json::Value::as_str) == Some("1023") {
-            ListOutcome::TemporarilyUnavailable
-        } else {
-            ListOutcome::Rejected
-        });
+        return Err(
+            if result.get("resultCode").and_then(serde_json::Value::as_str) == Some("1023") {
+                ListOutcome::TemporarilyUnavailable
+            } else {
+                ListOutcome::Rejected
+            },
+        );
     }
     let homes = result
         .pointer("/result/homes")
@@ -886,7 +886,8 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                                 // response, not a request error.
                                 match read_json(&response) {
                                     Ok(parsed)
-                                        if parsed.get("resultCode")
+                                        if parsed
+                                            .get("resultCode")
                                             .and_then(serde_json::Value::as_str)
                                             == Some("1107") =>
                                     {
@@ -901,7 +902,9 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                                                 coverage.homes_succeeded += 1;
                                             }
                                             Err(meari_devices::CatalogError::NotAuthenticated)
-                                            | Err(meari_devices::CatalogError::TemporarilyUnavailable) => {
+                                            | Err(
+                                                meari_devices::CatalogError::TemporarilyUnavailable,
+                                            ) => {
                                                 diagnostic.shared_rejected += 1;
                                             }
                                             Err(_) => diagnostic.shared_malformed += 1,
@@ -1121,8 +1124,9 @@ mod tests {
         let mut us = account();
         us.country = "US".into();
         us.phone_code = "1".into();
-        let failure =
-            discover_account(&mut transport, &mut TestClock { n: 0 }, us).err().unwrap();
+        let failure = discover_account(&mut transport, &mut TestClock { n: 0 }, us)
+            .err()
+            .unwrap();
         let AuthError::DeviceListUnavailable(diag) = failure else {
             panic!("login passed; expected device-list-stage failure");
         };
@@ -1165,9 +1169,9 @@ mod tests {
                 default_response: Some(default),
                 home_response: Some(homes),
             };
-            let failure =
-                discover_account(&mut transport, &mut TestClock { n: 0 }, account())
-                    .err().unwrap();
+            let failure = discover_account(&mut transport, &mut TestClock { n: 0 }, account())
+                .err()
+                .unwrap();
             let AuthError::DeviceListUnavailable(diag) = failure else {
                 panic!("expected redacted device-list diagnostics");
             };
