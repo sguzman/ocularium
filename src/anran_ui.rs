@@ -206,9 +206,11 @@ mod tests {
 
     #[test]
     fn explicit_consent_and_region_required() {
-        let mut panel = AnranPanel::default();
-        panel.account = Zeroizing::new("sample@example.invalid".into());
-        panel.password = Zeroizing::new("sample".into());
+        let mut panel = AnranPanel {
+            account: Zeroizing::new("sample@example.invalid".into()),
+            password: Zeroizing::new("sample".into()),
+            ..Default::default()
+        };
         assert!(!panel.ready());
         panel.consent = true;
         assert!(panel.ready());
