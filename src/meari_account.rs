@@ -230,6 +230,13 @@ impl AccountDiscovery {
     pub fn ppcs_metadata_summary(&self) -> meari_devices::PpcsMetadataSummary {
         self.catalog.ppcs_metadata_summary()
     }
+
+    pub fn matched_ppcs_summary(
+        &self,
+        saved: &[Option<String>],
+    ) -> meari_devices::MatchedPpcsSummary {
+        self.catalog.matched_ppcs_summary(saved)
+    }
 }
 
 /// Optional account configuration inspection. Only fixed, non-secret

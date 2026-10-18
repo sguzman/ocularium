@@ -111,6 +111,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Block ANRAN login until user explicitly confirms their camera is paired with the ANRAN mobile app, not ARCCTV/CloudEdge/EseeCloud; reset credentials/consent when app changes
 - [x] Offline and worker-integrated, selected-LAN ANRAN camera MAC correlation: report redacted one-to-one matches, ambiguity and missing identifiers; no cross-app/scope IP or model linking
 - [x] Redacted ANRAN PPCS metadata prerequisite preflight from temporary authorized owner/shared catalog: explicit transport only, parseable identity/init, host-key presence, missing/malformed counts, no extra requests or credential retention
+- [x] Count PPCS transport and complete/incomplete PPCS metadata for **uniquely MAC-matched selected-LAN saved cameras**; duplicate/absent MAC never matches, count-only UI, no extra HTTP, UDP or persistence
 - [ ] Validate the household camera's authoritative transport declaration via one deliberately consented account lookup before considering live PPCS probing
 - [x] Add bounded, one-shot shared-home discovery (up to 8 unique homes) with signed GET requests, owner/shared merging, redacted completeness, and no retry
 - [x] Optional, default-off one-shot Meari `pf/init` inspection: signed GET, response shape validation, redacted feature-presence flags, transient/malformed status, no retries or outbound service calls

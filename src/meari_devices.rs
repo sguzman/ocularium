@@ -126,6 +126,22 @@ impl PpcsMetadataSummary {
     }
 }
 
+fn ppcs_fields_valid(camera: &AuthorizedCamera) -> bool {
+    camera.transport == Transport::Ppcs
+        && camera
+            .device_uuid
+            .as_deref()
+            .is_some_and(|id| PpcsDeviceIdentity::from_factory_uuid(id).is_ok())
+        && camera
+            .p2p_init
+            .as_deref()
+            .is_some_and(|init| PpcsDeviceInit::from_device_init(init).is_ok())
+        && camera
+            .host_key
+            .as_deref()
+            .is_some_and(|key| !key.is_empty() && key.len() <= 256 && key.is_ascii())
+}
+
 /// Aggregate-only local correlation, with no device identifiers or MACs.
 ///
 /// A unique normalized MAC on each side is the only accepted link. A missing
@@ -151,6 +167,33 @@ impl CatalogCorrelation {
             self.saved_without_mac,
             self.saved_not_matched,
             self.cloud_without_mac
+        )
+    }
+}
+
+/// Transport split for one-to-one MAC matches only. A valid-looking PPCS
+/// record is not an authenticated peer, tested connection, or video session.
+/// No MACs, secrets, IPs, or device identifiers cross this summary boundary.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MatchedPpcsSummary {
+    pub unique_mac_matches: usize,
+    pub ppcs_declared: usize,
+    pub ppcs_metadata_valid: usize,
+    pub ppcs_metadata_incomplete: usize,
+    pub signaling: usize,
+    pub unknown_transport: usize,
+}
+
+impl MatchedPpcsSummary {
+    pub fn safe_text(self) -> String {
+        format!(
+            "Selected-LAN unique MAC matches: {} total, PPCS={}              (fields valid={}, incomplete={}), signaling={}, unknown={}.              Matched metadata does not authenticate a camera, prove video              compatibility, or authorize a network connection.",
+            self.unique_mac_matches,
+            self.ppcs_declared,
+            self.ppcs_metadata_valid,
+            self.ppcs_metadata_incomplete,
+            self.signaling,
+            self.unknown_transport,
         )
     }
 }
@@ -211,6 +254,68 @@ impl AuthorizedCatalog {
             }
         }
         comparison
+    }
+
+    /// Correlate the selected saved-camera scope with the temporary authorized
+    /// catalog. A match must have exactly one normalized MAC on EACH side.
+    /// Duplicated, absent or invalid MACs never grant a match; model, IP,
+    /// serial number, and account app labeling are not alternate identifiers.
+    /// The returned result contains counts only, and normalizations are
+    /// zeroized when this method returns.
+    pub fn matched_ppcs_summary(&self, saved: &[Option<String>]) -> MatchedPpcsSummary {
+        let local: Vec<Option<Zeroizing<String>>> = saved
+            .iter()
+            .map(|entry| {
+                entry
+                    .as_deref()
+                    .and_then(normalize_mac)
+                    .map(Zeroizing::new)
+            })
+            .collect();
+        let mut summary = MatchedPpcsSummary::default();
+        for (index, mac) in local.iter().enumerate() {
+            let Some(mac) = mac.as_ref() else {
+                continue;
+            };
+            if local[..index]
+                .iter()
+                .flatten()
+                .any(|earlier| earlier.as_str() == mac.as_str())
+            {
+                continue;
+            }
+            let saved_count = local
+                .iter()
+                .flatten()
+                .filter(|other| other.as_str() == mac.as_str())
+                .count();
+            if saved_count != 1 {
+                continue;
+            }
+            let mut cloud = self.records.iter().filter(|camera| {
+                camera.mac.as_deref() == Some(mac.as_str())
+            });
+            let Some(camera) = cloud.next() else {
+                continue;
+            };
+            if cloud.next().is_some() {
+                continue;
+            }
+            summary.unique_mac_matches += 1;
+            match camera.transport {
+                Transport::Ppcs => {
+                    summary.ppcs_declared += 1;
+                    if ppcs_fields_valid(camera) {
+                        summary.ppcs_metadata_valid += 1;
+                    } else {
+                        summary.ppcs_metadata_incomplete += 1;
+                    }
+                }
+                Transport::Signaling => summary.signaling += 1,
+                Transport::Unknown => summary.unknown_transport += 1,
+            }
+        }
+        summary
     }
 
     /// Count which explicitly PPCS-marked catalog records contain parseable
@@ -530,6 +635,114 @@ mod tests {
         ] {
             assert!(!report.contains(secret));
         }
+    }
+
+    #[test]
+    fn matched_ppcs_requires_unique_macs_in_both_inventories() {
+        let uuid = "01-BCDEF-23B";
+        let init = "0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key";
+        let response = serde_json::json!({
+            "resultCode": "1001", "result": {"ipc": [
+                {"deviceID":"good","snNum":"s1","mac":"02:11:22:33:44:01","deviceP2P":"ppcs",
+                 "deviceUUID":uuid,"p2pInit":init,"hostKey":"secret-host-key"},
+                {"deviceID":"incomplete","snNum":"s2","mac":"02:11:22:33:44:02",
+                 "deviceP2P":"ppcs","deviceUUID":uuid,"p2pInit":"invalid",
+                 "hostKey":"secret-host-key"},
+                {"deviceID":"signaling","snNum":"s3","mac":"02:11:22:33:44:03",
+                 "deviceP2P":"webrtc","deviceUUID":uuid,"p2pInit":init},
+                {"deviceID":"unknown","snNum":"s4","mac":"02:11:22:33:44:04",
+                 "model":"b81","deviceUUID":uuid,"p2pInit":init},
+                {"deviceID":"duplicated1","snNum":"s5","mac":"02:11:22:33:44:05",
+                 "deviceP2P":"ppcs","deviceUUID":uuid,"p2pInit":init,"hostKey":"secret"},
+                {"deviceID":"duplicated2","snNum":"s6","mac":"02:11:22:33:44:05",
+                 "deviceP2P":"ppcs","deviceUUID":uuid,"p2pInit":init,"hostKey":"secret"},
+                {"deviceID":"unmatched","snNum":"s7","mac":"02:11:22:33:44:07",
+                 "deviceP2P":"ppcs","deviceUUID":uuid,"p2pInit":init,"hostKey":"secret"}
+            ]}
+        });
+        let catalog = parse_authenticated_device_list(response.to_string().as_bytes()).unwrap();
+        let local = vec![
+            Some("02:11:22:33:44:01".into()),
+            Some("02:11:22:33:44:02".into()),
+            Some("02:11:22:33:44:03".into()),
+            Some("02:11:22:33:44:04".into()),
+            Some("02:11:22:33:44:05".into()),
+            Some("02:11:22:33:44:06".into()),
+            Some("02:11:22:33:44:06".into()),
+            None,
+            Some("not-a-mac".into()),
+        ];
+        let report = catalog.matched_ppcs_summary(&local);
+        assert_eq!(
+            report,
+            MatchedPpcsSummary {
+                unique_mac_matches: 4,
+                ppcs_declared: 2,
+                ppcs_metadata_valid: 1,
+                ppcs_metadata_incomplete: 1,
+                signaling: 1,
+                unknown_transport: 1,
+            }
+        );
+        let text = report.safe_text();
+        for forbidden in [
+            "02:11:22:33:44:01",
+            "b81",
+            "sample-key",
+            "secret-host-key",
+            uuid,
+            init,
+            "good",
+            "unmatched",
+        ] {
+            assert!(!text.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn matched_ppcs_rejects_duplicate_local_mac_and_never_inferrs_from_model() {
+        let raw = br#"{"resultCode":"1001","result":{"ipc":[
+          {"deviceID":"a","snNum":"a","mac":"02:11:22:33:44:01",
+           "deviceP2P":"ppcs","deviceUUID":"01-BCDEF-23B"},
+          {"deviceID":"b","snNum":"b","mac":"02:11:22:33:44:02",
+           "model":"b81","hostKey":"private"}
+        ]}}"#;
+        let catalog = parse_authenticated_device_list(raw).unwrap();
+        let saved = [
+            Some("02:11:22:33:44:01".into()),
+            Some("02:11:22:33:44:01".into()),
+            Some("02:11:22:33:44:02".into()),
+        ];
+        let found = catalog.matched_ppcs_summary(&saved);
+        assert_eq!(found.unique_mac_matches, 1);
+        assert_eq!(found.ppcs_declared, 0);
+        assert_eq!(found.unknown_transport, 1);
+    }
+
+    #[test]
+    fn matched_ppcs_merges_authorized_shared_home_before_scoring() {
+        let mut catalog = parse_authenticated_device_list(
+            br#"{"resultCode":"1001","result":{"ipc":[
+              {"deviceID":"one","snNum":"serial","deviceP2P":"ppcs"}
+            ]}}"#,
+        )
+        .unwrap();
+        let shared = serde_json::json!({
+            "resultCode":"1001","result":{"deviceList":[{
+                "deviceID":"one","snNum":"serial","deviceP2P":"ppcs",
+                "mac":"02:11:22:33:44:03",
+                "deviceUUID":"01-BCDEF-23B",
+                "p2pInit":"0S5x0R0o10Kl6mKk3p1w4k0i5zKt5qKr4x3r0j0z1P7y9wJm1q1N:sample-key",
+                "hostKey":"secret"
+            }]}
+        });
+        catalog
+            .merge(parse_authenticated_device_list(shared.to_string().as_bytes()).unwrap())
+            .unwrap();
+        let found = catalog.matched_ppcs_summary(&[Some("02:11:22:33:44:03".into())]);
+        assert_eq!(found.unique_mac_matches, 1);
+        assert_eq!(found.ppcs_declared, 1);
+        assert_eq!(found.ppcs_metadata_valid, 1);
     }
 
     #[test]
