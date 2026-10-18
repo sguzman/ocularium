@@ -1,3 +1,4 @@
+mod anran_ui;
 mod app;
 mod classify;
 mod dhcp;
@@ -7,7 +8,7 @@ mod history;
 mod identify;
 mod identity;
 mod local_stream;
-// Protocol groundwork has intentionally no network integration yet.
+// Experimental account transport is never invoked without explicit UI consent.
 mod mdns;
 #[allow(dead_code)]
 mod meari_account;

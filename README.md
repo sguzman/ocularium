@@ -38,7 +38,7 @@ The camera identity editor now has an optional **Camera hardware details** secti
 
 The household inventory distinguishes **user-provided identity** from **live access evidence**. It can display a protocol-level RTSP response, rejected RTSP access, advertised ONVIF Media, received SDP, or a successfully decoded single frame **during the current application session**. A saved model, app selection, or chipset vendor is never interpreted as proof that live viewing works. Without a new scan/test the app reports **not checked in this session**, not "offline" or "cloud-only".
 
-**App credentials are not supported yet.** ANRAN and VicoHome mobile-app accounts are not assumed to be RTSP accounts. Do not enter those logins into RTSP fields; an app-specific authorized integration must be implemented and validated before app-login QA.
+**Experimental ANRAN account discovery (opt-in):** The application now offers a manually opened panel for one explicit CloudPlus/Meari login and default device-list request. This unofficial integration is not yet verified against the household camera and may sign out an active mobile session. Credentials are masked, removed from the form when submitted, and never written to disk or reports. Only aggregate device counts or fixed error categories reach the GUI. No automatic login, retries, camera stream, or VicoHome account integration is implemented. Do not enter app credentials into RTSP fields.
 
 ## ONVIF capability investigation
 
@@ -50,7 +50,7 @@ Results distinguish no HTTP response, 401/403 authorization barriers, 404 missin
 
 In the **Saved camera records** editor, expand **Experimental local stream frame (MPEG-TS)** and supply an *already authorized, existing* `http://private-IPv4:port/path` endpoint from your own LAN or loopback. **Capture frame from local stream** fetches its MPEG-TS bytes locally and attempts to display exactly one CPU-decoded frame with ffmpeg, without persistent recording or credentials. The URL is not saved, shown in reports, or passed to ffmpeg; the decoder receives only video data over stdin. The HTTP client blocks external destinations, URL credentials and tokens, DNS, redirects, cookies, and proxies; inputs and byte counts are bounded. This does **not** connect to ANRAN/VicoHome accounts or create a local stream server.
 
-VicoHome officially does not support third-party RTSP/ONVIF live feeds, while experimental community ANRAN/Meari integrations may work for some products. Compatibility with the household cameras has **not** been verified. For sources and adapter milestones, see [camera ecosystem integration research](docs/camera-integrations.md). No app passwords should be supplied to Ocularium.
+VicoHome officially does not support third-party RTSP/ONVIF live feeds, while experimental community ANRAN/Meari integrations may work for some products. Compatibility with the household cameras has **not** been verified. For sources and adapter milestones, see [camera ecosystem integration research](docs/camera-integrations.md). ANRAN login must only be attempted after explicit informed consent in its experimental panel; do not enter app passwords into RTSP fields.
 
 ## Experimental single-frame RTSP capture
 

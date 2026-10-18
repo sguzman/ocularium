@@ -13,6 +13,7 @@ use std::{
 use eframe::egui::{self, Color32, RichText};
 
 use crate::{
+    anran_ui::AnranPanel,
     classify::{self, DeviceCategory},
     dhcp::DhcpStore,
     discovery::{self, DeepReport, Device, Event, Scope},
@@ -55,6 +56,7 @@ pub struct OculariumApp {
     messages: Vec<String>,
     status: String,
     registry: Registry,
+    anran: AnranPanel,
     history: HistoryStore,
     dhcp: DhcpStore,
     dhcp_text: String,
@@ -143,6 +145,7 @@ impl OculariumApp {
             messages,
             status: "Ready to scan".into(),
             registry,
+            anran: AnranPanel::default(),
             history,
             dhcp,
             dhcp_text: String::new(),
@@ -275,6 +278,7 @@ impl OculariumApp {
     }
 
     fn poll(&mut self) {
+        self.anran.poll();
         if let Some(watch) = &mut self.watch {
             watch.poll();
         }
@@ -2132,6 +2136,7 @@ impl eframe::App for OculariumApp {
             || self.snapshot_busy.is_some()
             || self.onvif_inspecting.is_some()
             || self.local_stream_busy.is_some()
+            || self.anran.busy()
         {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
@@ -2154,6 +2159,7 @@ impl eframe::App for OculariumApp {
                 }
                 ui.add_space(12.0);
                 self.camera_inventory_panel(ui);
+                self.anran.ui(ui);
                 self.saved_camera_editor(ui);
                 self.devices_panel(ui);
                 self.details_panel(ui);
