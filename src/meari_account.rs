@@ -25,6 +25,10 @@ const REDIRECT_ORIGIN: &str = "https://apis.cloudedge360.com";
 const REDIRECT_PATH: &str = "/ppstrongs/redirect";
 const LOGIN_PATH: &str = "/meari/app/login";
 const DEVICE_PATH: &str = "/v1/app/device/info/get";
+const HOMES_PATH: &str = "/v1/app/home/list";
+const SHARED_DEVICE_PATH: &str = "/v1/app/home/join/device/list";
+/// Hard cap on additional account requests per explicit, one-shot UI action.
+const MAX_SHARED_HOMES: usize = 8;
 const CA_KEY: &str = "bc29be30292a4309877807e101afbd51";
 const CA_SECRET: &str = "35a69fd1-6527-4566-b190-921f9a651488";
 const DES_KEY: &[u8; 8] = b"12345678";
@@ -84,8 +88,13 @@ impl Default for HttpsExchange {
 
 impl Exchange for HttpsExchange {
     fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
-        if (request.origin != REDIRECT_ORIGIN && allowed_api_origin(&request.origin).is_none())
-            || ![REDIRECT_PATH, LOGIN_PATH, DEVICE_PATH].contains(&request.path)
+        let expected_method = match request.path {
+            REDIRECT_PATH | HOMES_PATH | SHARED_DEVICE_PATH => Method::Get,
+            LOGIN_PATH | DEVICE_PATH => Method::Post,
+            _ => return Err(AuthError::InvalidServer),
+        };
+        if request.method != expected_method
+            || (request.origin != REDIRECT_ORIGIN && allowed_api_origin(&request.origin).is_none())
         {
             return Err(AuthError::InvalidServer);
         }
@@ -171,6 +180,52 @@ pub enum AuthError {
     DeviceListRejected,
     Transport,
 }
+/// Redacted completeness of an account's one-shot camera lookup.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiscoveryCoverage {
+    pub default_list_ok: bool,
+    pub home_list_ok: bool,
+    pub homes_attempted: usize,
+    pub homes_succeeded: usize,
+    pub homes_truncated: bool,
+}
+
+impl DiscoveryCoverage {
+    pub fn safe_text(self) -> String {
+        let complete = self.default_list_ok
+            && self.home_list_ok
+            && self.homes_attempted == self.homes_succeeded
+            && !self.homes_truncated;
+        format!(
+            "Camera list coverage: {}; default list={}; home list={};              shared homes checked={}; shared homes successful={}.              No automatic retries. An incomplete lookup can omit cameras.",
+            if complete { "complete request sequence" } else { "partial / unverified" },
+            if self.default_list_ok { "ok" } else { "unavailable" },
+            if self.home_list_ok { "ok" } else { "unavailable" },
+            self.homes_attempted,
+            self.homes_succeeded,
+        )
+    }
+}
+
+/// Contains ephemeral camera records, never safe for Debug or serialization.
+pub struct AccountDiscovery {
+    catalog: AuthorizedCatalog,
+    pub coverage: DiscoveryCoverage,
+}
+
+impl AccountDiscovery {
+    pub fn summary(&self) -> meari_devices::CatalogSummary {
+        self.catalog.summary()
+    }
+
+    pub fn correlate_saved_macs(
+        &self,
+        saved: &[Option<String>],
+    ) -> meari_devices::CatalogCorrelation {
+        self.catalog.correlate_saved_macs(saved)
+    }
+}
+
 impl From<meari_devices::CatalogError> for AuthError {
     fn from(_: meari_devices::CatalogError) -> Self {
         Self::DeviceListRejected
@@ -402,13 +457,93 @@ fn device_request(
     })
 }
 
+fn signed_home_request(
+    credentials: &Credentials,
+    session: &Session,
+    path: &'static str,
+    home_id: Option<&str>,
+    stamp: Stamp,
+) -> Result<WireRequest, AuthError> {
+    if path != HOMES_PATH && path != SHARED_DEVICE_PATH {
+        return Err(AuthError::InvalidInput);
+    }
+    if (path == SHARED_DEVICE_PATH) != home_id.is_some() {
+        return Err(AuthError::InvalidInput);
+    }
+    let mut params = form_fields(&stamp, credentials)?;
+    params.insert("userID".into(), session.user_id.as_str().to_owned());
+    if let Some(home_id) = home_id {
+        params.insert("homeID".into(), home_id.to_owned());
+        params.insert("funSwitch".into(), "1".into());
+    }
+    sign_form(&mut params, &session.token);
+    Ok(WireRequest {
+        method: Method::Get,
+        origin: session.origin.clone(),
+        path,
+        params,
+        headers: ca_headers(path, &stamp, Some(&session.token))?,
+    })
+}
+
+struct HomeIds {
+    ids: Vec<Zeroizing<String>>,
+    truncated: bool,
+}
+
+/// Accept only scalar home IDs and never use them as hosts, paths, or headers.
+/// Extra homes are not queried; results are expressly marked incomplete.
+fn parse_home_ids(bytes: &[u8]) -> Result<HomeIds, AuthError> {
+    let result = read_json(bytes)?;
+    if !successful(&result) {
+        return Err(AuthError::DeviceListRejected);
+    }
+    let homes = result
+        .pointer("/result/homes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(AuthError::InvalidReply)?;
+    let mut ids = Vec::new();
+    let mut truncated = homes.len() > MAX_SHARED_HOMES;
+    for home in homes {
+        let Some(value) = home.get("homeID") else {
+            truncated = true;
+            continue;
+        };
+        let raw = match value {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => {
+                truncated = true;
+                continue;
+            }
+        };
+        let raw = Zeroizing::new(raw);
+        if raw.is_empty()
+            || raw.len() > 64
+            || !raw.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            truncated = true;
+            continue;
+        }
+        if ids.iter().any(|id: &Zeroizing<String>| id.as_str() == raw.as_str()) {
+            continue;
+        }
+        if ids.len() >= MAX_SHARED_HOMES {
+            truncated = true;
+            break;
+        }
+        ids.push(raw);
+    }
+    Ok(HomeIds { ids, truncated })
+}
+
 /// Mockable, one-shot account exchange. The GUI owns explicit consent.
 /// No automatic retries or background requests.
 pub fn discover_account<T: Exchange, C: Clock>(
     transport: &mut T,
     clock: &mut C,
     mut credentials: Credentials,
-) -> Result<AuthorizedCatalog, AuthError> {
+) -> Result<AccountDiscovery, AuthError> {
     if credentials.account.is_empty()
         || credentials.account.len() > 254
         || credentials.password.is_empty()
@@ -468,12 +603,69 @@ pub fn discover_account<T: Exchange, C: Clock>(
         user_id: Zeroizing::new(user_id),
         token: Zeroizing::new(token),
     };
-    let raw = Zeroizing::new(transport.exchange(device_request(
+    let mut coverage = DiscoveryCoverage::default();
+    let mut catalog = meari_devices::parse_authenticated_device_list(
+        br#"{"resultCode":"1001","result":{"ipc":[]}}"#,
+    )?;
+    // A shared-only account can have no default camera list. Preserve a
+    // partial result instead of pretending the default list succeeded.
+    if let Ok(raw) = transport.exchange(device_request(
         &credentials,
         &session,
         clock.next(),
-    )?)?);
-    meari_devices::parse_authenticated_device_list(&raw).map_err(Into::into)
+    )?) {
+        let raw = Zeroizing::new(raw);
+        if let Ok(default_catalog) = meari_devices::parse_authenticated_device_list(&raw) {
+            coverage.default_list_ok = true;
+            catalog.merge(default_catalog)?;
+        }
+    }
+
+    if let Ok(raw) = transport.exchange(signed_home_request(
+        &credentials,
+        &session,
+        HOMES_PATH,
+        None,
+        clock.next(),
+    )?) {
+        let raw = Zeroizing::new(raw);
+        if let Ok(homes) = parse_home_ids(&raw) {
+            coverage.home_list_ok = true;
+            coverage.homes_truncated = homes.truncated;
+            for home_id in homes.ids {
+                coverage.homes_attempted += 1;
+                let request = signed_home_request(
+                    &credentials,
+                    &session,
+                    SHARED_DEVICE_PATH,
+                    Some(&home_id),
+                    clock.next(),
+                )?;
+                if let Ok(response) = transport.exchange(request) {
+                    let response = Zeroizing::new(response);
+                    // 1107 is a documented non-error empty shared-home list.
+                    // A failed/malformed home response marks the scan partial,
+                    // without discarding other successfully retrieved cameras.
+                    if let Ok(parsed) = read_json(&response) {
+                        if parsed.get("resultCode").and_then(serde_json::Value::as_str)
+                            == Some("1107")
+                        {
+                            coverage.homes_succeeded += 1;
+                        } else if let Ok(shared_catalog) =
+                            meari_devices::parse_authenticated_device_list(&response)
+                        {
+                            catalog.merge(shared_catalog)?;
+                            coverage.homes_succeeded += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !coverage.default_list_ok && coverage.homes_succeeded == 0 {
+        return Err(AuthError::DeviceListRejected);
+    }
+    Ok(AccountDiscovery { catalog, coverage })
 }
 
 #[cfg(test)]
@@ -539,19 +731,183 @@ mod tests {
                     assert!(request.params.contains_key("signature"));
                     Ok(br#"{"resultCode":"1001","result":{"ipc":[{"deviceID":1,"snNum":"FAKE-DEVICE","deviceP2P":"ppcs"}]}}"#.to_vec())
                 }
+                4 => {
+                    assert_eq!(request.path, HOMES_PATH);
+                    assert_eq!(request.method, Method::Get);
+                    assert!(request.params.contains_key("signature"));
+                    assert!(!request.params.contains_key("homeID"));
+                    Ok(br#"{"resultCode":"1001","result":{"homes":[]}}"#.to_vec())
+                }
                 _ => panic!("Unexpected network request"),
             }
         }
     }
     #[test]
-    fn three_request_anran_handshake_with_no_retry_or_storage() {
+    fn one_shot_anran_login_queries_default_list_and_home_list() {
         let mut transport = Fixture { calls: 0 };
         let mut clock = TestClock { n: 0 };
         let catalog = discover_account(&mut transport, &mut clock, account()).unwrap();
         assert_eq!(catalog.summary().cameras, 1);
         assert_eq!(catalog.summary().ppcs, 1);
-        assert_eq!(transport.calls, 3);
+        assert_eq!(transport.calls, 4);
+        assert_eq!(
+            catalog.coverage,
+            DiscoveryCoverage {
+                default_list_ok: true,
+                home_list_ok: true,
+                ..Default::default()
+            }
+        );
     }
+    struct SharedFixture {
+        calls: usize,
+        default_failure: bool,
+        reject_shared: bool,
+    }
+
+    impl Exchange for SharedFixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            match self.calls {
+                1 => Ok(
+                    br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#
+                        .to_vec(),
+                ),
+                2 => Ok(
+                    br#"{"resultCode":"1001","result":{"userID":1,"userToken":"private-token"}}"#
+                        .to_vec(),
+                ),
+                3 => {
+                    assert_eq!(request.path, DEVICE_PATH);
+                    if self.default_failure {
+                        Ok(br#"{"resultCode":"1023"}"#.to_vec())
+                    } else {
+                        Ok(
+                            br#"{"resultCode":"1001","result":{"ipc":[
+                              {"deviceID":"alpha","snNum":"private-a","deviceP2P":"ppcs"}
+                            ]}}"#
+                                .to_vec(),
+                        )
+                    }
+                }
+                4 => {
+                    assert_eq!(request.path, HOMES_PATH);
+                    assert_eq!(request.method, Method::Get);
+                    assert_eq!(request.headers.get("X-Ca-Key").unwrap(), "private-token");
+                    assert!(request.params.contains_key("signature"));
+                    Ok(
+                        br#"{"resultCode":"1001","result":{"homes":[
+                            {"homeID":"test-home-1"},{"homeID":202}
+                        ]}}"#
+                            .to_vec(),
+                    )
+                }
+                5 => {
+                    assert_eq!(request.path, SHARED_DEVICE_PATH);
+                    assert_eq!(request.method, Method::Get);
+                    assert_eq!(request.params.get("homeID").unwrap(), "test-home-1");
+                    assert_eq!(request.params.get("funSwitch").unwrap(), "1");
+                    assert!(request.params.contains_key("signature"));
+                    if self.reject_shared {
+                        Ok(b"not-json".to_vec())
+                    } else {
+                        Ok(
+                            br#"{"resultCode":"1001","result":{"deviceList":[
+                                {"deviceID":"alpha","snNum":"private-a",
+                                 "deviceP2P":"webrtc","mac":"02:aa:bb:cc:dd:ee"},
+                                {"deviceID":"beta","snNum":"private-b","deviceP2P":"ppcs"}
+                            ]}}"#
+                                .to_vec(),
+                        )
+                    }
+                }
+                6 => {
+                    assert_eq!(request.path, SHARED_DEVICE_PATH);
+                    assert_eq!(request.params.get("homeID").unwrap(), "202");
+                    Ok(br#"{"resultCode":"1107"}"#.to_vec())
+                }
+                _ => panic!("One-shot login must not retry or fetch unlisted homes"),
+            }
+        }
+    }
+
+    #[test]
+    fn shared_home_augmentation_merges_on_device_id_and_preserves_coverage() {
+        let mut transport = SharedFixture {
+            calls: 0,
+            default_failure: false,
+            reject_shared: false,
+        };
+        let mut clock = TestClock { n: 0 };
+        let discovered = discover_account(&mut transport, &mut clock, account()).unwrap();
+        assert_eq!(transport.calls, 6);
+        assert_eq!(discovered.summary().cameras, 2);
+        assert_eq!(discovered.summary().signaling, 1);
+        assert_eq!(discovered.summary().ppcs, 1);
+        assert_eq!(
+            discovered.coverage,
+            DiscoveryCoverage {
+                default_list_ok: true,
+                home_list_ok: true,
+                homes_attempted: 2,
+                homes_succeeded: 2,
+                homes_truncated: false,
+            }
+        );
+        assert!(discovered.coverage.safe_text().contains("complete request sequence"));
+        let safe = discovered.coverage.safe_text();
+        assert!(!safe.contains("test-home-1"));
+        assert!(!safe.contains("private"));
+    }
+
+    #[test]
+    fn shared_only_account_does_not_require_default_camera_list_success() {
+        let mut transport = SharedFixture {
+            calls: 0,
+            default_failure: true,
+            reject_shared: false,
+        };
+        let mut clock = TestClock { n: 0 };
+        let discovered = discover_account(&mut transport, &mut clock, account()).unwrap();
+        assert_eq!(transport.calls, 6);
+        assert_eq!(discovered.summary().cameras, 2);
+        assert!(!discovered.coverage.default_list_ok);
+        assert_eq!(discovered.coverage.homes_succeeded, 2);
+        assert!(discovered.coverage.safe_text().contains("partial / unverified"));
+    }
+
+    #[test]
+    fn malformed_shared_home_is_incomplete_with_no_retries() {
+        let mut transport = SharedFixture {
+            calls: 0,
+            default_failure: false,
+            reject_shared: true,
+        };
+        let mut clock = TestClock { n: 0 };
+        let discovered = discover_account(&mut transport, &mut clock, account()).unwrap();
+        assert_eq!(transport.calls, 6);
+        assert_eq!(discovered.summary().cameras, 1);
+        assert_eq!(discovered.coverage.homes_attempted, 2);
+        assert_eq!(discovered.coverage.homes_succeeded, 1);
+        assert!(discovered.coverage.safe_text().contains("partial / unverified"));
+    }
+
+    #[test]
+    fn shared_home_id_parser_dedupes_validates_and_caps_requests() {
+        let payload = br#"{"resultCode":"1001","result":{"homes":[
+            {"homeID":"first"},{"homeID":"first"},{"homeID":"bad/home"},
+            {"homeID":1},{"homeID":2},{"homeID":3},{"homeID":4},
+            {"homeID":5},{"homeID":6},{"homeID":7},{"homeID":8},{"homeID":9}
+        ]}}"#;
+        let homes = parse_home_ids(payload).unwrap();
+        assert_eq!(homes.ids.len(), MAX_SHARED_HOMES);
+        assert!(homes.truncated);
+        assert_eq!(homes.ids[0].as_str(), "first");
+        assert_eq!(homes.ids[1].as_str(), "1");
+        assert!(parse_home_ids(br#"{"resultCode":"1001","result":{}}"#).is_err());
+        assert!(parse_home_ids(br#"{"resultCode":"1023"}"#).is_err());
+    }
+
     #[test]
     fn known_answer_crypto_vectors_match_independent_implementation() {
         let t = Stamp {

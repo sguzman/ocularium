@@ -99,7 +99,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Triangulate ANRAN app identity against its App Store Meari/84 link and the community profile; separate app-level evidence from individual camera support
 - [x] Block ANRAN login until user explicitly confirms their camera is paired with the ANRAN mobile app, not ARCCTV/CloudEdge/EseeCloud; reset credentials/consent when app changes
 - [x] Offline and worker-integrated, selected-LAN ANRAN camera MAC correlation: report redacted one-to-one matches, ambiguity and missing identifiers; no cross-app/scope IP or model linking
-- [ ] Extend ANRAN account discovery to shared homes and optional platform initialization
+- [x] Add bounded, one-shot shared-home discovery (up to 8 unique homes) with signed GET requests, owner/shared merging, redacted completeness, and no retry
+- [ ] Optional Meari IoT platform initialization, only if needed for verified P2P transport
 - [ ] Build an opt-in, secure ANRAN account client that can verify an authenticated device list before trying streaming; keep credentials/tokens out of disk and logs
 - [ ] Verify ANRAN's exact account backend and device protocol prior to implementing any app authentication
 - [ ] Add real ANRAN video adapter without mandatory external server; do not infer compatibility from app branding alone

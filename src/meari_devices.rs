@@ -178,6 +178,29 @@ impl AuthorizedCatalog {
         comparison
     }
 
+    /// Merge separate owner and shared-home responses using authoritative
+    /// deviceID only. Prefer the more complete record for repeated IDs.
+    /// An excess of unique cameras fails closed rather than truncating results.
+    pub fn merge(&mut self, other: Self) -> Result<(), CatalogError> {
+        let mut by_id = BTreeMap::new();
+        for camera in self.records.drain(..) {
+            by_id.insert(camera.device_id.clone(), camera);
+        }
+        for camera in other.records {
+            let replace = by_id
+                .get(&camera.device_id)
+                .is_none_or(|prior: &AuthorizedCamera| camera.completeness() > prior.completeness());
+            if replace {
+                by_id.insert(camera.device_id.clone(), camera);
+            }
+            if by_id.len() > MAX_RECORDS {
+                return Err(CatalogError::TooManyCameras);
+            }
+        }
+        self.records = by_id.into_values().collect();
+        Ok(())
+    }
+
     pub fn summary(&self) -> CatalogSummary {
         let mut summary = CatalogSummary {
             cameras: self.records.len(),
@@ -414,6 +437,30 @@ mod tests {
         ] {
             assert!(!report.contains(secret));
         }
+    }
+
+    #[test]
+    fn merging_owner_and_shared_homes_prefers_richer_matching_device_id() {
+        let mut owner = parse_authenticated_device_list(
+            br#"{"resultCode":"1001","result":{"ipc":[
+                {"deviceID":"A","snNum":"one"},
+                {"deviceID":"B","snNum":"two","deviceP2P":"ppcs"}
+            ]}}"#,
+        )
+        .unwrap();
+        let shared = parse_authenticated_device_list(
+            br#"{"resultCode":"1001","result":{"deviceList":[
+                {"deviceID":"A","snNum":"one","mac":"02:ab:cd:12:34:56",
+                 "deviceP2P":"webrtc"},
+                {"deviceID":"C","snNum":"three","mac":"02:ab:cd:12:34:57"}
+            ]}}"#,
+        )
+        .unwrap();
+        owner.merge(shared).unwrap();
+        assert_eq!(owner.summary().cameras, 3);
+        assert_eq!(owner.summary().signaling, 1);
+        assert_eq!(owner.summary().ppcs, 1);
+        assert!(owner.by_mac("02:ab:cd:12:34:56").is_some());
     }
 
     #[test]

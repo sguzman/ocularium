@@ -10,7 +10,7 @@ use eframe::egui;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
-    meari_account::{self, AuthError, Credentials},
+    meari_account::{self, AuthError, Credentials, DiscoveryCoverage},
     meari_devices::{CatalogCorrelation, CatalogSummary},
 };
 
@@ -59,6 +59,7 @@ impl PairedApp {
 struct DiscoveryReport {
     catalog: CatalogSummary,
     correlation: CatalogCorrelation,
+    coverage: DiscoveryCoverage,
 }
 
 pub struct AnranPanel {
@@ -186,9 +187,10 @@ impl AnranPanel {
                 &mut meari_account::SystemClock,
                 credentials,
             )
-            .map(|catalog| DiscoveryReport {
-                catalog: catalog.summary(),
-                correlation: catalog.correlate_saved_macs(&saved_macs),
+            .map(|discovery| DiscoveryReport {
+                catalog: discovery.summary(),
+                correlation: discovery.correlate_saved_macs(&saved_macs),
+                coverage: discovery.coverage,
             });
             for mac in saved_macs.iter_mut().flatten() {
                 mac.zeroize();
@@ -206,7 +208,9 @@ impl AnranPanel {
                 ui.label(
                     "A login may invalidate the mobile app session. Only use an account you control.",
                 );
-                ui.label("One request sequence, no automatic retries or saved credentials.");
+                ui.label(
+                    "One consented login sequence: default devices, home list and up to                      8 shared-home lists. No automatic retries or saved credentials.",
+                );
                 ui.small("Country and dialing code must match the account registration region.");
                 let busy = self.busy();
                 let mut selected_app = self.paired_app;
@@ -315,6 +319,7 @@ impl AnranPanel {
                 if let Some(result) = self.result {
                     match result {
                         Ok(report) => {
+                            ui.label(report.coverage.safe_text());
                             ui.label(report.catalog.safe_text());
                             ui.label(report.correlation.safe_text());
                             ui.small(
