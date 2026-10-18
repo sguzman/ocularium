@@ -43,9 +43,7 @@ impl VideoCodec {
 
     fn nal_type(self, unit: &[u8]) -> Option<u8> {
         match self {
-            Self::H264 if !unit.is_empty() && unit[0] & 0x80 == 0 => {
-                Some(unit[0] & 0x1f)
-            }
+            Self::H264 if !unit.is_empty() && unit[0] & 0x80 == 0 => Some(unit[0] & 0x1f),
             Self::Hevc if unit.len() >= 2 && unit[0] & 0x80 == 0 && unit[1] & 7 != 0 => {
                 Some((unit[0] >> 1) & 0x3f)
             }
@@ -138,9 +136,10 @@ fn annexb_units(payload: &[u8]) -> Option<Vec<&[u8]>> {
 fn detect_codec(units: &[&[u8]]) -> Option<VideoCodec> {
     // Require an actual parameter-set NAL, not an arbitrary slice header:
     // guessing on an encrypted stream can misclassify random bytes.
-    let h264_sps = units.iter().any(|unit| unit.first().is_some_and(|b| {
-        *b & 0x80 == 0 && (*b & 0x1f) == 7
-    }));
+    let h264_sps = units.iter().any(|unit| {
+        unit.first()
+            .is_some_and(|b| *b & 0x80 == 0 && (*b & 0x1f) == 7)
+    });
     let hevc_sps = units
         .iter()
         .any(|unit| VideoCodec::Hevc.nal_type(unit) == Some(33));
@@ -296,7 +295,10 @@ impl VvpVideoAdapter {
                 // Repeat missing parameter sets in front of a recovery frame,
                 // so a fresh decoder does not rely on an earlier transport packet.
                 for &param_kind in codec.parameter_types() {
-                    if !units.iter().any(|unit| codec.nal_type(unit) == Some(param_kind)) {
+                    if !units
+                        .iter()
+                        .any(|unit| codec.nal_type(unit) == Some(param_kind))
+                    {
                         let param = &self.params[&param_kind];
                         access_unit.extend_from_slice(&[0, 0, 0, 1]);
                         access_unit.extend_from_slice(param);
@@ -415,15 +417,30 @@ mod tests {
     use super::*;
 
     fn frame(kind: FrameKind, sequence: u32, payload: &[u8]) -> Vec<u8> {
-        let header = if kind == FrameKind::Keyframe { 0x3c } else { 0x34 };
+        let header = if kind == FrameKind::Keyframe {
+            0x3c
+        } else {
+            0x34
+        };
         let mut bytes = vec![0; header + payload.len()];
         bytes[..3].copy_from_slice(&[0, 0, 1]);
-        bytes[3] = if kind == FrameKind::Keyframe { 0xfc } else { 0xfd };
-        let sequence_at = if kind == FrameKind::Keyframe { 0x10 } else { 0x08 };
-        let length_at = if kind == FrameKind::Keyframe { 0x38 } else { 0x30 };
+        bytes[3] = if kind == FrameKind::Keyframe {
+            0xfc
+        } else {
+            0xfd
+        };
+        let sequence_at = if kind == FrameKind::Keyframe {
+            0x10
+        } else {
+            0x08
+        };
+        let length_at = if kind == FrameKind::Keyframe {
+            0x38
+        } else {
+            0x30
+        };
         bytes[sequence_at..sequence_at + 4].copy_from_slice(&sequence.to_le_bytes());
-        bytes[length_at..length_at + 4]
-            .copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes[length_at..length_at + 4].copy_from_slice(&(payload.len() as u32).to_le_bytes());
         bytes[header..].copy_from_slice(payload);
         bytes
     }
@@ -435,9 +452,15 @@ mod tests {
 
     #[test]
     fn detects_only_explicit_annexb_configuration() {
-        assert_eq!(detect_codec(&annexb_units(SPS).unwrap()), Some(VideoCodec::H264));
+        assert_eq!(
+            detect_codec(&annexb_units(SPS).unwrap()),
+            Some(VideoCodec::H264)
+        );
         let hevc = [0, 0, 0, 1, 0x42, 0x01, 0x01];
-        assert_eq!(detect_codec(&annexb_units(&hevc).unwrap()), Some(VideoCodec::Hevc));
+        assert_eq!(
+            detect_codec(&annexb_units(&hevc).unwrap()),
+            Some(VideoCodec::Hevc)
+        );
         for bad in [
             &[1, 2, 3, 4, 5][..],
             &[0, 0, 1][..],
@@ -450,16 +473,37 @@ mod tests {
     #[test]
     fn startup_requires_both_params_and_idr_then_rejects_frame_gaps() {
         let mut parser = VvpVideoAdapter::default();
-        assert!(parser.push_reassembled(&frame(FrameKind::Predicted, 1, PFRAME)).unwrap().is_empty());
+        assert!(parser
+            .push_reassembled(&frame(FrameKind::Predicted, 1, PFRAME))
+            .unwrap()
+            .is_empty());
         let key = frame(FrameKind::Keyframe, 8, &[SPS, PPS, IDR].concat());
         let accepted = parser.push_reassembled(&key).unwrap();
         assert_eq!(accepted.len(), 1);
         assert_eq!(accepted[0].codec, VideoCodec::H264);
         assert!(!accepted[0].bytes.is_empty());
-        assert_eq!(parser.push_reassembled(&frame(FrameKind::Predicted, 9, PFRAME)).unwrap().len(), 1);
-        assert!(parser.push_reassembled(&frame(FrameKind::Predicted, 12, PFRAME)).unwrap().is_empty());
-        assert!(parser.push_reassembled(&frame(FrameKind::Predicted, 13, PFRAME)).unwrap().is_empty());
-        assert_eq!(parser.push_reassembled(&frame(FrameKind::Keyframe, 14, IDR)).unwrap().len(), 1);
+        assert_eq!(
+            parser
+                .push_reassembled(&frame(FrameKind::Predicted, 9, PFRAME))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(parser
+            .push_reassembled(&frame(FrameKind::Predicted, 12, PFRAME))
+            .unwrap()
+            .is_empty());
+        assert!(parser
+            .push_reassembled(&frame(FrameKind::Predicted, 13, PFRAME))
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            parser
+                .push_reassembled(&frame(FrameKind::Keyframe, 14, IDR))
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -471,14 +515,19 @@ mod tests {
         let samples = parser.push_reassembled(&second).unwrap();
         assert_eq!(samples.len(), 1);
         assert!(samples[0].bytes.starts_with(SPS));
-        assert!(samples[0].bytes.windows(PPS.len()).any(|window| window == PPS));
+        assert!(samples[0]
+            .bytes
+            .windows(PPS.len())
+            .any(|window| window == PPS));
     }
 
     #[test]
     fn encrypted_or_mixed_codec_payload_is_never_guessed() {
         let mut parser = VvpVideoAdapter::default();
         assert_eq!(
-            parser.push_reassembled(&frame(FrameKind::Keyframe, 1, &[5, 8, 12, 13, 14] )).err(),
+            parser
+                .push_reassembled(&frame(FrameKind::Keyframe, 1, &[5, 8, 12, 13, 14]))
+                .err(),
             Some(VideoError::InvalidVideoPayload),
         );
         let hevc_sps = [0, 0, 1, 0x42, 1, 0x01];
@@ -573,13 +622,31 @@ mod tests {
 
     #[test]
     fn decoder_never_accepts_missing_or_mixed_video() {
-        assert_eq!(decode_first_frame(&[]).err(), Some(VideoError::NoDecodableFrame));
-        let empty = EncodedSample { codec: VideoCodec::H264, bytes: vec![] };
-        assert_eq!(decode_first_frame(&[empty]).err(), Some(VideoError::InvalidVideoPayload));
+        assert_eq!(
+            decode_first_frame(&[]).err(),
+            Some(VideoError::NoDecodableFrame)
+        );
+        let empty = EncodedSample {
+            codec: VideoCodec::H264,
+            bytes: vec![],
+        };
+        assert_eq!(
+            decode_first_frame(&[empty]).err(),
+            Some(VideoError::InvalidVideoPayload)
+        );
         let samples = [
-            EncodedSample { codec: VideoCodec::H264, bytes: vec![1] },
-            EncodedSample { codec: VideoCodec::Hevc, bytes: vec![2] },
+            EncodedSample {
+                codec: VideoCodec::H264,
+                bytes: vec![1],
+            },
+            EncodedSample {
+                codec: VideoCodec::Hevc,
+                bytes: vec![2],
+            },
         ];
-        assert_eq!(decode_first_frame(&samples).err(), Some(VideoError::InvalidVideoPayload));
+        assert_eq!(
+            decode_first_frame(&samples).err(),
+            Some(VideoError::InvalidVideoPayload)
+        );
     }
 }
