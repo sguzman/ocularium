@@ -314,7 +314,10 @@ mod tests {
     #[test]
     fn anran_brand_never_implies_anran_app_backend() {
         let all = PairedApp::ALL;
-        assert_eq!(all.iter().filter(|app| app.supported_by_client()).count(), 1);
+        assert_eq!(
+            all.iter().filter(|app| app.supported_by_client()).count(),
+            1
+        );
         assert!(PairedApp::Anran.supported_by_client());
         assert!(!PairedApp::Unknown.supported_by_client());
         assert!(!PairedApp::CloudEdge.supported_by_client());
