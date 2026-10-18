@@ -108,14 +108,19 @@ fn valid(account: &str, password: &str, country: &str, dialing_code: &str) -> bo
         && dialing_code.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn error_text(error: AuthError) -> &'static str {
+fn error_text(error: AuthError) -> String {
     match error {
-        AuthError::InvalidInput => "Invalid account or region fields.",
-        AuthError::InvalidServer => "Unrecognized server or redirect; stopped.",
-        AuthError::InvalidReply => "Unrecognized server response; stopped.",
-        AuthError::LoginRejected => "Login rejected; no retry.",
-        AuthError::DeviceListRejected => "No verified device list.",
-        AuthError::Transport => "HTTPS request failed; no retry.",
+        AuthError::DeviceListUnavailable(diagnostic) => diagnostic.safe_text(),
+        other => match other {
+            AuthError::InvalidInput => "Invalid account or region fields.",
+            AuthError::InvalidServer => "Unrecognized server or redirect; stopped.",
+            AuthError::InvalidReply => "Unrecognized server response; stopped.",
+            AuthError::LoginRejected => "Login rejected; no retry.",
+            AuthError::DeviceListRejected => "Device list rejected; no retry.",
+            AuthError::Transport => "HTTPS request failed; no retry.",
+            AuthError::DeviceListUnavailable(_) => unreachable!(),
+        }
+        .to_owned(),
     }
 }
 

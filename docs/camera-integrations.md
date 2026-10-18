@@ -62,6 +62,10 @@ The user-observed ANRAN camera's **platform b81 is not its P2P transport field**
 
 The module intentionally rejects zero-length or excessively large media payloads and never attempts to decrypt data guessed to be plaintext. Payloads only become usable after the future authorized transport layer has reassembled them.
 
+## Redacted post-login endpoint diagnostics
+
+Human QA on a US-registered ANRAN account showed a successful-looking login followed by the generic "No verified device list" error. The native client previously swallowed both the default-device and home-list endpoint failures into that one result. The account client now classifies each into fixed labels: accepted, HTTP/network failure, temporary vendor unavailability, rejected or unexpected response; when shared-home lists were attempted it also counts their HTTP, rejection and malformed outcomes. Failed post-login catalog discovery now carries only these summary categories into the existing consent-gated GUI; raw responses, user IDs, tokens, home IDs, account info, URLs and error strings are never exposed. Synthetic tests cover US-region account fields, transport failures, vendor status differences, malformed response shapes, and accepted empty catalogs. **This does not change request order, endpoint selection, user permissions or retry policy.** No fresh credential attempt is required for this implementation.
+
 ## Authenticated Meari device-list normalization (native Rust, offline)
 
 The new `src/meari_devices.rs` implements an **in-memory, bounded parser** for the camera-list response a future authenticated Meari-family account client may receive. It covers account-owned and shared-home device groups, deduplicates repeated `deviceID` records without cross-merging different devices, and classifies `ipc`, `snap`, and doorbell categories. A successful response marker is required; the `1023` transient code is recognized separately. **A marker in JSON does not authenticate a response by itself**: the future client is responsible for making the authenticated HTTPS request and verifying the server.
