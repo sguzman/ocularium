@@ -123,10 +123,7 @@ impl VvpDecryptedVideoAdapter {
         self.video.reset();
     }
 
-    pub fn push_complete(
-        &mut self,
-        frame: &[u8],
-    ) -> Result<Vec<EncodedSample>, StreamDecodeError> {
+    pub fn push_complete(&mut self, frame: &[u8]) -> Result<Vec<EncodedSample>, StreamDecodeError> {
         let clear = match decode_complete_video_frame(frame, self.format) {
             Ok(clear) => clear,
             Err(error) => {
@@ -152,19 +149,16 @@ mod tests {
     // Independently generated using Python cryptography's TripleDES ECB
     // implementation, not using the Rust code under test.
     const I_CIPHER: [u8; 32] = [
-        0xaa, 0x42, 0x97, 0xe9, 0xb5, 0xd1, 0x3d, 0x75,
-        0x23, 0xe2, 0x0a, 0xbd, 0x05, 0xe9, 0x9b, 0x22,
-        0x26, 0xb8, 0x63, 0xa6, 0xbd, 0x6a, 0xc3, 0xf1,
-        0x68, 0xde, 0xc5, 0x5a, 0x3e, 0xdb, 0x36, 0x0b,
+        0xaa, 0x42, 0x97, 0xe9, 0xb5, 0xd1, 0x3d, 0x75, 0x23, 0xe2, 0x0a, 0xbd, 0x05, 0xe9, 0x9b,
+        0x22, 0x26, 0xb8, 0x63, 0xa6, 0xbd, 0x6a, 0xc3, 0xf1, 0x68, 0xde, 0xc5, 0x5a, 0x3e, 0xdb,
+        0x36, 0x0b,
     ];
     const P_CIPHER: [u8; 16] = [
-        0xaa, 0x42, 0x97, 0xe9, 0xb5, 0xd1, 0x3d, 0x75,
-        0x7e, 0x88, 0xb5, 0x31, 0x8d, 0x4a, 0x46, 0xda,
+        0xaa, 0x42, 0x97, 0xe9, 0xb5, 0xd1, 0x3d, 0x75, 0x7e, 0x88, 0xb5, 0x31, 0x8d, 0x4a, 0x46,
+        0xda,
     ];
     const H264_KEY_PAYLOAD: [u8; 20] = [
-        0, 0, 0, 1, 0x67, 0x42, 0, 0x1e,
-        0, 0, 1, 0x68, 0xce, 0x06,
-        0, 0, 1, 0x65, 0x88, 0x84,
+        0, 0, 0, 1, 0x67, 0x42, 0, 0x1e, 0, 0, 1, 0x68, 0xce, 0x06, 0, 0, 1, 0x65, 0x88, 0x84,
     ];
     const H264_P_PAYLOAD: [u8; 6] = [0, 0, 0, 1, 0x41, 0x9a];
 
@@ -223,11 +217,15 @@ mod tests {
     #[test]
     fn encrypted_h264_stream_passes_existing_codec_and_recovery_gate() {
         let mut adapter = VvpDecryptedVideoAdapter::new(VideoFrameFormat::Legacy3Des);
-        let key = adapter.push_complete(&synthetic_encrypted(0xfc, 1)).unwrap();
+        let key = adapter
+            .push_complete(&synthetic_encrypted(0xfc, 1))
+            .unwrap();
         assert_eq!(key.len(), 1);
         assert_eq!(key[0].codec, VideoCodec::H264);
         assert_eq!(key[0].bytes, H264_KEY_PAYLOAD);
-        let pred = adapter.push_complete(&synthetic_encrypted(0xfd, 2)).unwrap();
+        let pred = adapter
+            .push_complete(&synthetic_encrypted(0xfd, 2))
+            .unwrap();
         assert_eq!(pred.len(), 1);
         assert_eq!(pred[0].bytes, H264_P_PAYLOAD);
         assert!(adapter
@@ -238,7 +236,9 @@ mod tests {
             .push_complete(&synthetic_encrypted(0xfd, 5))
             .unwrap()
             .is_empty());
-        let recovery = adapter.push_complete(&synthetic_encrypted(0xfc, 6)).unwrap();
+        let recovery = adapter
+            .push_complete(&synthetic_encrypted(0xfc, 6))
+            .unwrap();
         assert_eq!(recovery.len(), 1);
     }
 
@@ -246,10 +246,15 @@ mod tests {
     fn plaintext_is_explicit_and_is_never_decrypted_accidentally() {
         let mut decoder = VvpDecryptedVideoAdapter::new(VideoFrameFormat::Plaintext);
         assert_eq!(
-            decoder.push_complete(&synthetic_plain(0xfc, 1)).unwrap().len(),
+            decoder
+                .push_complete(&synthetic_plain(0xfc, 1))
+                .unwrap()
+                .len(),
             1
         );
-        assert!(decoder.push_complete(&synthetic_encrypted(0xfc, 2)).is_err());
+        assert!(decoder
+            .push_complete(&synthetic_encrypted(0xfc, 2))
+            .is_err());
         assert!(decode_complete_video_frame(
             &synthetic_plain(0xfc, 1),
             VideoFrameFormat::Legacy3Des
@@ -291,7 +296,10 @@ mod tests {
     fn failed_packet_resets_old_codec_state_before_new_keyframe() {
         let mut adapter = VvpDecryptedVideoAdapter::new(VideoFrameFormat::Legacy3Des);
         assert_eq!(
-            adapter.push_complete(&synthetic_encrypted(0xfc, 1)).unwrap().len(),
+            adapter
+                .push_complete(&synthetic_encrypted(0xfc, 1))
+                .unwrap()
+                .len(),
             1
         );
         assert!(adapter.push_complete(&[0, 0, 1, 0xfc]).is_err());
@@ -300,7 +308,10 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_eq!(
-            adapter.push_complete(&synthetic_encrypted(0xfc, 3)).unwrap().len(),
+            adapter
+                .push_complete(&synthetic_encrypted(0xfc, 3))
+                .unwrap()
+                .len(),
             1
         );
     }
