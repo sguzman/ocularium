@@ -82,7 +82,10 @@ pub fn decode_complete_video_frame(
         key[..VENDOR_KEY.len()].copy_from_slice(VENDOR_KEY);
         let cipher = TdesEde3::new_from_slice(&key).map_err(|_| StreamDecodeError::InvalidVideo)?;
         key.zeroize();
-        for chunk in clear[crypt_offset..crypt_offset + span].as_chunks_mut::<BLOCK_SIZE>().0 {
+        for chunk in clear[crypt_offset..crypt_offset + span]
+            .as_chunks_mut::<BLOCK_SIZE>()
+            .0
+        {
             let mut block = Block::<TdesEde3>::default();
             block.copy_from_slice(chunk);
             cipher.decrypt_block(&mut block);
