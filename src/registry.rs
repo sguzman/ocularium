@@ -369,7 +369,9 @@ mod tests {
                 ..Default::default()
             },
         };
-        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        registry
+            .camera_profiles
+            .insert(p.identity.clone(), p.clone());
         assert_eq!(
             registry
                 .single_unknown_app_profile_for_scope(&a)
@@ -381,20 +383,28 @@ mod tests {
         assert!(registry.single_unknown_app_profile_for_scope(&b).is_none());
 
         p.app = CameraApp::VicoHome;
-        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        registry
+            .camera_profiles
+            .insert(p.identity.clone(), p.clone());
         assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
 
         p.app = CameraApp::Unknown;
         p.role = CameraRole::NotCamera;
-        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        registry
+            .camera_profiles
+            .insert(p.identity.clone(), p.clone());
         assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
 
         p.role = CameraRole::Unreviewed;
-        registry.camera_profiles.insert(p.identity.clone(), p.clone());
+        registry
+            .camera_profiles
+            .insert(p.identity.clone(), p.clone());
         let mut another = p.clone();
         another.identity = "second-record".into();
         another.last_ip = Ipv4Addr::new(192, 168, 0, 106);
-        registry.camera_profiles.insert(another.identity.clone(), another);
+        registry
+            .camera_profiles
+            .insert(another.identity.clone(), another);
         assert!(registry.single_unknown_app_profile_for_scope(&a).is_none());
         // The shortcut never mutates the user registry.
         assert_eq!(registry.camera_profiles_for_scope(&a).len(), 2);
