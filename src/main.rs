@@ -16,6 +16,8 @@ mod meari_account;
 mod meari_devices;
 #[allow(dead_code)]
 mod meari_vvp;
+#[allow(dead_code)]
+mod meari_video;
 mod neighbor_history;
 mod neighbor_watch;
 mod onvif_capabilities;

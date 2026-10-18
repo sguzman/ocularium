@@ -38,7 +38,9 @@ Protocol layout reviewed against the MIT-licensed community source:
 - `custom_components/cloudplus/p2p_streamer/codec.py`: per-frame payload offsets, timestamp and sequence
 - `custom_components/cloudplus/p2p_streamer/engine.py`: transport selection from `deviceP2P`
 
-The user-observed ANRAN camera's **platform b81 is not its P2P transport field** and therefore cannot establish Meari compatibility or whether it uses modern signaling versus legacy PPCS. A matching app name alone does not validate the account backend. Live video still requires account-authorized device discovery, verified transport/signaling and key management, media decryption where enabled, and muxing to the native frame decoder.
+**Offline codec handoff (no camera account or transport):** `src/meari_video.rs` consumes only *complete, reassembled, already decrypted* VVP video frames and extracts bounded H.264/HEVC Annex-B access units. It requires SPS/PPS for H.264 or VPS/SPS/PPS for HEVC and matching keyframe NALs, preserves sequence continuity, and waits for another keyframe after gaps. Cached parameter sets can be prepended to a recovery frame. It refuses unrecognized/encrypted-looking bytes rather than trying to decrypt or guess. The standalone CPU decoder accepts these elementary bytes on ffmpeg stdin, without URLs, a server, or GPU access; its output is a single bounded in-memory RGB frame. The synthetic tests do not establish actual camera compatibility. **Neither account authentication nor P2P delivery is connected to this offline module yet.**
+
+The user-observed ANRAN camera's **platform b81 is not its P2P transport field** and therefore cannot establish Meari compatibility or whether it uses modern signaling versus legacy PPCS. A matching app name alone does not validate the account backend. Live video still requires account-authorized device discovery, verified transport/signaling and key management, media decryption where enabled, and delivery of complete codec frames to the native decoder.
 
 The module intentionally rejects zero-length or excessively large media payloads and never attempts to decrypt data guessed to be plaintext. Payloads only become usable after the future authorized transport layer has reassembled them.
 
@@ -71,6 +73,6 @@ The module's protocol logic is mockable and tested without touching any real cam
 ## Open engineering work
 
 1. Validate a **specific** backend/device match for the ANRAN camera without logging into undocumented APIs from an untrusted client. Explicit user consent is required before any future account connection.
-2. For a proven ANRAN integration, implement a reviewed, bounded in-process adapter to produce local MPEG-TS with no required Home Assistant or background server. The current generic intake can help test video decoding independently of account/API work.
+2. For a proven ANRAN integration, add reviewed, authorized P2P transport and VVP reassembly/decryption to deliver complete plaintext video frames into the existing offline elementary-stream/CPU decoder. A local MPEG-TS bridge is not required for this frame path; the separate generic MPEG-TS intake remains optional.
 3. Identify a supported event-media export workflow for VicoHome. Full live access remains unavailable through documented open protocols.
 4. Add continuous multi-camera playback and optional MCP snapshot access only when actual authorized video sources work and have clear access permissions.
