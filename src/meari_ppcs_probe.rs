@@ -147,6 +147,13 @@ impl PpcsOneShotProbe {
         })
     }
 
+    /// The local socket address must match the transport exactly. A guessed
+    /// local IP or a bind to a different interface would invalidate the
+    /// advertised PPCS rendezvous address.
+    pub fn local_addr(&self) -> SocketAddrV4 {
+        self.local_addr
+    }
+
     pub fn state(&self) -> ProbeState {
         self.state
     }

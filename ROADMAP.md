@@ -95,7 +95,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Add offline legacy PPCS packet envelope and reversible substitution cipher with independent wire vectors and integration tests; do not mistake packet obfuscation for peer authentication
 - [x] Decode bounded PPCS factory-9 device identity and init relay/cipher material, validate 16-byte IPv4 sockaddr, and enforce root/candidate match in synthetic rendezvous preflight
 - [x] Add an explicit, mock-I/O PPCS rendezvous probe controller with authoritative record selection, finite per-root requests, offer/response filtering, five-second deadline, budgets and teardown (no sockets or background service)
-- [ ] Integrate a verified, opt-in native UDP transport only after confirming the household camera's PPCS backend and defining peer/session authentication; do not interpret PPCS cipher or DID matches as authentication
+- [x] Implement uninvoked, explicit IPv4 UDP socket adapter with short read/write timeouts, bounded datagrams, local-bound address matching and loopback-only integration tests
+- [ ] Enable a verified, opt-in PPCS UDP session from the native GUI only after confirming the household camera's PPCS backend and defining peer/session authentication; no automatic access
 - [ ] Verify device-specific P2P transport, authenticated packet decryption, peer rendezvous and media codec decryption before connecting real camera streams
 - [x] Require authoritative device-list transport field before selecting PPCS versus modern signaling (do not infer from platform b81)
 - [x] Offline bounded parsing of successful Meari camera device-list responses (default + shared homes), session-only transport/key data, redacted summaries, MAC-only correlation
