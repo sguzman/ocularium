@@ -50,6 +50,14 @@ Local inventory correlation is **MAC-only**, if the backend actually supplies a 
 
 This is another protocol milestone, **not** working camera account discovery, live stream authentication, or proof of video access.
 
+## ANRAN account handshake (experimental, not yet user-facing)
+
+The new native `src/meari_account.rs` implements an **explicit, three-stage** ANRAN wire exchange using the community profile's reported `sourceApp=84`, `partnerId=84`, app version and phone-type metadata. It constructs (1) redirect, (2) **one** login attempt, and (3) the authenticated default device list. The legacy DES-CBC and AES-CBC compatibility formats, HMAC-SHA1 `X-Ca` request headers, and signed device-list form are checked against independently computed fixed-answer vectors. Failed login stops immediately; it never mutates the password or retries automatically.
+
+The module's protocol logic is mockable and tested without touching any real camera or account. A native certificate-verifying HTTPS transport is present but is **not exposed through the GUI or invoked by ordinary discovery**. It enforces an allowlist of known Meari/CloudEdge host families, prohibits unvalidated redirect targets, disables proxies and HTTP redirects, bounds response size, and returns error categories rather than server bodies or credentials. Account/password and token values are short-lived `Zeroizing<String>` values in memory; the existing camera registry does not store them.
+
+**Current limitations:** The ANRAN community protocol may not match this particular device, some app logins may displace a concurrent mobile session, and a verified live account/device exchange has not been performed. The current handshake covers the account's default camera list, **not yet the separate shared-home list or platform initialization**. A successful API response would still not prove video support or transport compatibility. This remains an experimental implementation, not an authorization to connect to any third-party account.
+
 ## Open engineering work
 
 1. Validate a **specific** backend/device match for the ANRAN camera without logging into undocumented APIs from an untrusted client. Explicit user consent is required before any future account connection.
