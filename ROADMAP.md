@@ -91,6 +91,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Document ANRAN/Meari and VicoHome integration evidence, with explicit unverified-device boundary
 - [x] Implement bounded, offline native Meari VVP command encoding / plaintext media framing / replay gating with synthetic tests; no network or credentials
 - [x] Add offline VVP plaintext H.264/HEVC Annex-B elementary stream adapter and CPU ffmpeg single-frame decode (synthetic tests, no P2P/crypto/network)
+- [x] Add separate offline PPCS reliable-channel → 32-byte media-frame → validated H.264/HEVC access-unit → CPU decoder handoff; gated on independently verified session input, no network/decryption/automatic playback
 - [x] Add offline PPCS eight-channel ordered receive buffering and 32-byte media-frame reassembly (no network, no crypto, synthetic loss/reorder/wrap tests)
 - [x] Add offline legacy PPCS packet envelope and reversible substitution cipher with independent wire vectors and integration tests; do not mistake packet obfuscation for peer authentication
 - [x] Decode bounded PPCS factory-9 device identity and init relay/cipher material, validate 16-byte IPv4 sockaddr, and enforce root/candidate match in synthetic rendezvous preflight

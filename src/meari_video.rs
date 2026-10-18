@@ -34,14 +34,14 @@ impl VideoCodec {
         }
     }
 
-    fn parameter_types(self) -> &'static [u8] {
+    pub(crate) fn parameter_types(self) -> &'static [u8] {
         match self {
             Self::H264 => &[7, 8],
             Self::Hevc => &[32, 33, 34],
         }
     }
 
-    fn nal_type(self, unit: &[u8]) -> Option<u8> {
+    pub(crate) fn nal_type(self, unit: &[u8]) -> Option<u8> {
         match self {
             Self::H264 if !unit.is_empty() && unit[0] & 0x80 == 0 => Some(unit[0] & 0x1f),
             Self::Hevc if unit.len() >= 2 && unit[0] & 0x80 == 0 && unit[1] & 7 != 0 => {
@@ -51,7 +51,7 @@ impl VideoCodec {
         }
     }
 
-    fn keyframe_type(self, nal_type: u8) -> bool {
+    pub(crate) fn keyframe_type(self, nal_type: u8) -> bool {
         match self {
             Self::H264 => nal_type == 5,
             Self::Hevc => (16..=21).contains(&nal_type),
@@ -96,7 +96,7 @@ impl Drop for EncodedSample {
 /// Only accepts Annex-B start codes. An encrypted stream, an AVCC/HVCC
 /// length-prefixed stream, and a truncated start code are not silently treated
 /// as plaintext H.264/HEVC. Returned units exclude their start-code prefix.
-fn annexb_units(payload: &[u8]) -> Option<Vec<&[u8]>> {
+pub(crate) fn annexb_units(payload: &[u8]) -> Option<Vec<&[u8]>> {
     if payload.len() < 5 {
         return None;
     }
@@ -133,7 +133,7 @@ fn annexb_units(payload: &[u8]) -> Option<Vec<&[u8]>> {
     Some(units)
 }
 
-fn detect_codec(units: &[&[u8]]) -> Option<VideoCodec> {
+pub(crate) fn detect_codec(units: &[&[u8]]) -> Option<VideoCodec> {
     // Require an actual parameter-set NAL, not an arbitrary slice header:
     // guessing on an encrypted stream can misclassify random bytes.
     let h264_sps = units.iter().any(|unit| {

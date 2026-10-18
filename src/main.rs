@@ -23,6 +23,8 @@ mod meari_ppcs_probe;
 #[allow(dead_code)]
 mod meari_ppcs_udp;
 #[allow(dead_code)]
+mod meari_ppcs_video;
+#[allow(dead_code)]
 mod meari_ppcs_wire;
 #[allow(dead_code)]
 mod meari_video;
