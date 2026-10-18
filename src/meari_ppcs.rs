@@ -31,18 +31,10 @@ pub enum PpcsError {
     InvalidFrame,
 }
 
+#[derive(Default)]
 struct ChannelState {
     expected: u16,
     pending: BTreeMap<u16, Vec<u8>>,
-}
-
-impl Default for ChannelState {
-    fn default() -> Self {
-        Self {
-            expected: 0,
-            pending: BTreeMap::new(),
-        }
-    }
 }
 
 impl ChannelState {
@@ -149,7 +141,10 @@ impl PpcsReliableReceiver {
                 receiver.clear();
                 return Err(PpcsError::ReorderLimit);
             }
-            receiver.pending.entry(sequence).or_insert_with(|| chunk.to_vec());
+            receiver
+                .pending
+                .entry(sequence)
+                .or_insert_with(|| chunk.to_vec());
             delivery.ack = Some(ChannelAck { channel, sequence });
         }
         // Old/stale or already-delivered packets are dropped without bytes.
@@ -213,10 +208,7 @@ impl PpcsMediaReassembler {
         self.buffer.len()
     }
 
-    pub fn push_ordered_chunk(
-        &mut self,
-        chunk: &[u8],
-    ) -> Result<Vec<PpcsMediaFrame>, PpcsError> {
+    pub fn push_ordered_chunk(&mut self, chunk: &[u8]) -> Result<Vec<PpcsMediaFrame>, PpcsError> {
         if chunk.len() > CHANNEL_CHUNK_MAX
             || self.buffer.len().saturating_add(chunk.len()) > MEDIA_BUFFER_MAX
         {
