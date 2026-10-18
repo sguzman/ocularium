@@ -322,6 +322,12 @@ impl PpcsRendezvousPreflight {
         }
     }
 
+    /// Private factory identity bytes for the caller's offline request.
+    /// These are not authentication material and must never enter logs.
+    pub(crate) fn identity_bytes(&self) -> &[u8; 20] {
+        self.identity.token()
+    }
+
     pub fn candidate_count(&self) -> usize {
         self.offered.len()
     }

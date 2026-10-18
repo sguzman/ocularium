@@ -19,6 +19,8 @@ mod meari_ppcs;
 #[allow(dead_code)]
 mod meari_ppcs_discovery;
 #[allow(dead_code)]
+mod meari_ppcs_probe;
+#[allow(dead_code)]
 mod meari_ppcs_wire;
 #[allow(dead_code)]
 mod meari_video;
