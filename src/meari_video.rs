@@ -524,9 +524,8 @@ mod tests {
         assert_eq!(
             parser
                 .push_reassembled(&frame(FrameKind::Keyframe, 2, &[SPS, &hevc_sps].concat()))
-                .unwrap()
-                .len(),
-            0,
+                .err(),
+            Some(VideoError::InvalidVideoPayload),
         );
     }
 
