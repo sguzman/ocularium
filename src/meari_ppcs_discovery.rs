@@ -136,7 +136,7 @@ impl PpcsDeviceInit {
         let cipher = PpcsPacketCipher::from_session_key(raw_key.as_bytes())?;
         let mut text = Zeroizing::new(Vec::with_capacity(encoded.len() / 2));
         let mut checksum = 0x39u8;
-        for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in encoded.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             if !pair.iter().all(u8::is_ascii_alphanumeric) {
                 return Err(DiscoveryError::InvalidInitialization);
             }
