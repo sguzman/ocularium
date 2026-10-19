@@ -82,8 +82,8 @@ impl Default for HttpsExchange {
             agent: ureq::AgentBuilder::new()
                 .redirects(0)
                 .try_proxy_from_env(false)
-                .timeout_connect(std::time::Duration::from_secs(5))
-                .timeout_read(std::time::Duration::from_secs(8))
+                .timeout_connect(std::time::Duration::from_secs(10))
+                .timeout_read(std::time::Duration::from_secs(30))
                 .timeout_write(std::time::Duration::from_secs(8))
                 .build(),
         }
@@ -627,8 +627,7 @@ fn sign_form(fields: &mut BTreeMap<String, String>, token: &str) {
 }
 
 fn redirect_request(credentials: &Credentials, stamp: Stamp) -> Result<WireRequest, AuthError> {
-    if stamp.redirect_nonce.len() != 8
-        || !stamp.redirect_nonce.bytes().all(|b| b.is_ascii_digit())
+    if stamp.redirect_nonce.len() != 8 || !stamp.redirect_nonce.bytes().all(|b| b.is_ascii_digit())
     {
         return Err(AuthError::InvalidInput);
     }
