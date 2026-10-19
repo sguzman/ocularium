@@ -115,7 +115,7 @@ fn error_text(error: AuthError) -> String {
         AuthError::DeviceListUnavailable(diagnostic) => diagnostic.safe_text(),
         AuthError::HttpStatus(status) => {
             format!("HTTPS request failed: {}; no retry.", status.safe_label())
-        },
+        }
         other => match other {
             AuthError::InvalidInput => "Invalid account or region fields.",
             AuthError::InvalidServer => "Unrecognized server or redirect; stopped.",
