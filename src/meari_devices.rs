@@ -663,9 +663,9 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
     // The upstream walker also collects camera objects directly nested
     // inside a result array, not just under ipc/deviceList keys.
     let direct_array_records = match result {
-        serde_json::Value::Array(items) => items
-            .iter()
-            .any(|item| parse_device(item, None).is_some()),
+        serde_json::Value::Array(items) => {
+            items.iter().any(|item| parse_device(item, None).is_some())
+        }
         _ => false,
     };
     let recognized_collection = recognizable_device_collection(result, 0)?;
@@ -1123,10 +1123,7 @@ mod tests {
             let catalog = parse_authenticated_device_list(successful.as_bytes()).unwrap();
             assert_eq!(catalog.summary().cameras, 1);
         }
-        for temporarily_unavailable in [
-            r#"{"resultCode":1023}"#,
-            r#"{"resultCode":"1023"}"#,
-        ] {
+        for temporarily_unavailable in [r#"{"resultCode":1023}"#, r#"{"resultCode":"1023"}"#] {
             assert_eq!(
                 parse_authenticated_device_list(temporarily_unavailable.as_bytes()).err(),
                 Some(CatalogError::TemporarilyUnavailable)
@@ -1155,8 +1152,7 @@ mod tests {
         }}"#;
         let catalog = parse_authenticated_device_list(result).unwrap();
         assert_eq!(catalog.summary().cameras, 1);
-        let accessories_only =
-            br#"{"resultCode":"1001","result":{"nvr":[],"base":[],"chime":[]}}"#;
+        let accessories_only = br#"{"resultCode":"1001","result":{"nvr":[],"base":[],"chime":[]}}"#;
         assert_eq!(
             parse_authenticated_device_list(accessories_only)
                 .unwrap()
@@ -1164,8 +1160,7 @@ mod tests {
                 .cameras,
             0
         );
-        let malformed =
-            br#"{"resultCode":1001,"result":{"ipc":[],"base":{"deviceID":1}}}"#;
+        let malformed = br#"{"resultCode":1001,"result":{"ipc":[],"base":{"deviceID":1}}}"#;
         assert_eq!(
             parse_authenticated_device_list(malformed).err(),
             Some(CatalogError::UnexpectedDeviceListShape)

@@ -999,9 +999,7 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                                 // 1107 is the documented empty shared-home
                                 // response, not a request error.
                                 match read_json(&response) {
-                                    Ok(parsed)
-                                        if meari_devices::result_code_is(&parsed, 1107) =>
-                                    {
+                                    Ok(parsed) if meari_devices::result_code_is(&parsed, 1107) => {
                                         coverage.homes_succeeded += 1;
                                     }
                                     Ok(_) => {
