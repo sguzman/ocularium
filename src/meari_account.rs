@@ -597,8 +597,8 @@ fn form_fields(
     // with its GMT offset, rather than unconditional GMT+00:00.
     // The clock captures the offset at this instant; fixture stamps remain
     // independent of the host's timezone.
-    let offset = chrono::FixedOffset::east_opt(stamp.utc_offset_seconds)
-        .ok_or(AuthError::InvalidInput)?;
+    let offset =
+        chrono::FixedOffset::east_opt(stamp.utc_offset_seconds).ok_or(AuthError::InvalidInput)?;
     let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(stamp.epoch_ms)
         .ok_or(AuthError::InvalidInput)?
         .with_timezone(&offset);
