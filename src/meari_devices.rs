@@ -583,7 +583,12 @@ fn recognizable_device_collection(
         serde_json::Value::Object(fields) => {
             for (name, child) in fields {
                 if category_for(name).is_some() || name == "deviceList" {
-                    found |= child.is_array();
+                    // Another valid list must not mask a malformed known list:
+                    // silently accepting this could claim zero cameras.
+                    if !child.is_array() {
+                        return Err(CatalogError::UnexpectedDeviceListShape);
+                    }
+                    found = true;
                 } else {
                     found |= recognizable_device_collection(child, depth + 1)?;
                 }
@@ -1035,6 +1040,10 @@ mod tests {
             r#"{"resultCode":"1001","result":{"status":"ok"}}"#,
             r#"{"resultCode":"1001","result":{"ipc":{}}}"#,
             r#"{"resultCode":"1001","result":{"deviceList":null}}"#,
+            // A valid sibling cannot conceal an invalid known list.
+            r#"{"resultCode":"1001","result":{"ipc":[],"deviceList":null}}"#,
+            r#"{"resultCode":"1001","result":{"deviceList":[],"doorbell":{}}}"#,
+            r#"{"resultCode":"1001","result":{"homes":[{"ipc":[]},{"snap":"bad"}]}}"#,
         ] {
             assert_eq!(
                 parse_authenticated_device_list(invalid.as_bytes()).err(),

@@ -52,7 +52,7 @@ After the first account QA, a saved model-only CQ1F record existed but was label
 
 ## Validated ANRAN catalog response shape (not silent empty results)
 
-A vendor response with `resultCode=1001` but no recognized device-list structure must not be counted as a verified, empty catalog. The native catalog parser now differentiates a genuinely empty `result: {}` or an explicitly empty known `ipc`/`deviceList` collection from an unknown nonempty response shape, a missing `result`, or an unexpected type. Such mismatches produce the existing fixed **unexpected response** diagnostic and never claim camera incompatibility. This change needs no new requests, credentials, UDP access or user QA; synthetic tests cover known nested collections and foreign API shapes.
+A vendor response with `resultCode=1001` but no recognized device-list structure must not be counted as a verified, empty catalog. The native catalog parser now differentiates a genuinely empty `result: {}` or an explicitly empty known `ipc`/`deviceList` collection from an unknown nonempty response shape, a missing `result`, or an unexpected type. A malformed known camera-list field now invalidates the result even if another known list is valid or empty. Such mismatches produce the existing fixed **unexpected response** diagnostic and never claim camera incompatibility. This change needs no new requests, credentials, UDP access or user QA; synthetic tests cover known nested collections and foreign API shapes.
 
 ## Canonical ANRAN region after redirect (no additional login)
 

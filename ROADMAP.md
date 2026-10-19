@@ -115,6 +115,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [ ] Avoid additional real account logins until offline endpoint compatibility work justifies their session-disruption cost
 - [x] Correct signed post-login ANRAN request parity with pinned reference: omit login-only `localTime` from device, home, shared-home and platform HMAC fields; fixed independent US HMAC vectors and empty-home compatibility tests
 - [x] Reject successful-status device-list responses with unknown or absent nonempty catalog shapes rather than silently accepting them as zero cameras; retain valid empty result and explicitly empty known lists
+- [x] Reject mixed catalog responses with malformed known list fields even when another known array is valid or empty; synthetic regression only
 - [ ] Verify whether the US-account device-list failure is resolved using **one separately consented** attempt when the owner is ready; no automatic retries, no speculative camera-access claims
 - [ ] Investigate actual US-account device-list rejection/transport incompatibility using diagnostics from one newly consented QA attempt only when warranted; do not interpret current failure as bad credentials or incompatible hardware
 - [x] Bounded TLS-verifying transport restricted to vendor HTTPS domains, with proxy/redirect disabled, no GUI connection or automatic requests
