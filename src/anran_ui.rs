@@ -113,6 +113,9 @@ fn valid(account: &str, password: &str, country: &str, dialing_code: &str) -> bo
 fn error_text(error: AuthError) -> String {
     match error {
         AuthError::DeviceListUnavailable(diagnostic) => diagnostic.safe_text(),
+        AuthError::HttpStatus(status) => {
+            format!("HTTPS request failed: {}; no retry.", status.safe_label())
+        },
         other => match other {
             AuthError::InvalidInput => "Invalid account or region fields.",
             AuthError::InvalidServer => "Unrecognized server or redirect; stopped.",
@@ -120,7 +123,7 @@ fn error_text(error: AuthError) -> String {
             AuthError::LoginRejected => "Login rejected; no retry.",
             AuthError::DeviceListRejected => "Device list rejected; no retry.",
             AuthError::Transport => "HTTPS request failed; no retry.",
-            AuthError::DeviceListUnavailable(_) => unreachable!(),
+            AuthError::DeviceListUnavailable(_) | AuthError::HttpStatus(_) => unreachable!(),
         }
         .to_owned(),
     }

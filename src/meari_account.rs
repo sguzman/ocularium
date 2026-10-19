@@ -35,6 +35,9 @@ const CA_SECRET: &str = "35a69fd1-6527-4566-b190-921f9a651488";
 const DES_KEY: &[u8; 8] = b"12345678";
 const DES_IV: &[u8; 8] = b"01234567";
 const MAX_RESPONSE: usize = 512 * 1024;
+/// Matches the pinned reference's requests.Session mobile User-Agent.
+/// This is protocol parity, not a claim that the camera app uses Android.
+const MOBILE_USER_AGENT: &str = "Mozilla/5.0 (Linux; U; Android 14; en-us; Pixel Build/UP1A.231105.001) AppleWebKit/533.1 (KHTML, like Gecko) Version/5.0 Mobile Safari/533.1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Method {
@@ -116,7 +119,9 @@ impl Exchange for HttpsExchange {
             }
             Method::Post => self.agent.post(&url),
         };
-        let mut builder = builder.set("Accept", "application/json");
+        let mut builder = builder
+            .set("Accept", "application/json")
+            .set("User-Agent", MOBILE_USER_AGENT);
         for (name, value) in headers {
             builder = builder.set(name, value);
         }
@@ -124,11 +129,18 @@ impl Exchange for HttpsExchange {
             Method::Get => builder.call(),
             Method::Post => builder.send_form(&params),
         }
-        .map_err(|_| AuthError::Transport)?;
+        .map_err(|error| match error {
+            ureq::Error::Status(code, _) => {
+                AuthError::HttpStatus(HttpStatusClass::from_status(code))
+            }
+            ureq::Error::Transport(_) => AuthError::Transport,
+        })?;
         // Do not propagate response bodies or remote error descriptions:
         // servers might reflect account identifiers or session tokens.
         if response.status() != 200 {
-            return Err(AuthError::Transport);
+            return Err(AuthError::HttpStatus(HttpStatusClass::from_status(
+                response.status(),
+            )));
         }
         use std::io::Read as _;
         let mut body = Vec::new();
@@ -172,6 +184,39 @@ pub struct Credentials {
     pub phone_code: String,
 }
 
+/// Only a coarse HTTP class leaves the HTTPS transport. We do not
+/// persist raw codes, response bodies, remote messages, or request URLs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HttpStatusClass {
+    AccessDenied,
+    EndpointMissing,
+    RateLimited,
+    ServerUnavailable,
+    Other,
+}
+
+impl HttpStatusClass {
+    pub fn from_status(code: u16) -> Self {
+        match code {
+            401 | 403 => Self::AccessDenied,
+            404 | 405 => Self::EndpointMissing,
+            408 | 429 => Self::RateLimited,
+            500..=599 => Self::ServerUnavailable,
+            _ => Self::Other,
+        }
+    }
+
+    pub fn safe_label(self) -> &'static str {
+        match self {
+            Self::AccessDenied => "HTTP access denied",
+            Self::EndpointMissing => "HTTP endpoint unavailable",
+            Self::RateLimited => "HTTP rate limited or timed out",
+            Self::ServerUnavailable => "HTTP server error",
+            Self::Other => "unexpected HTTP status",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthError {
     InvalidInput,
@@ -180,6 +225,7 @@ pub enum AuthError {
     LoginRejected,
     DeviceListRejected,
     DeviceListUnavailable(DeviceListDiagnostic),
+    HttpStatus(HttpStatusClass),
     Transport,
 }
 
@@ -191,6 +237,7 @@ pub enum ListOutcome {
     NotRequested,
     Accepted,
     TransportFailed,
+    HttpStatus(HttpStatusClass),
     TemporarilyUnavailable,
     Rejected,
     Malformed,
@@ -201,11 +248,19 @@ impl ListOutcome {
         match self {
             Self::NotRequested => "not requested",
             Self::Accepted => "accepted",
-            Self::TransportFailed => "HTTP/network failure",
+            Self::TransportFailed => "network, TLS or timeout failure",
+            Self::HttpStatus(status) => status.safe_label(),
             Self::TemporarilyUnavailable => "temporarily unavailable",
             Self::Rejected => "request rejected",
             Self::Malformed => "unexpected response",
         }
+    }
+}
+
+fn exchange_error_outcome(error: AuthError) -> ListOutcome {
+    match error {
+        AuthError::HttpStatus(status) => ListOutcome::HttpStatus(status),
+        _ => ListOutcome::TransportFailed,
     }
 }
 
@@ -876,7 +931,7 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                 Err(error) => diagnostic.default_list = device_list_outcome(error),
             }
         }
-        Err(_) => diagnostic.default_list = ListOutcome::TransportFailed,
+        Err(error) => diagnostic.default_list = exchange_error_outcome(error),
     }
 
     match transport.exchange(signed_home_request(
@@ -944,7 +999,7 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                 Err(error) => diagnostic.home_list = error,
             }
         }
-        Err(_) => diagnostic.home_list = ListOutcome::TransportFailed,
+        Err(error) => diagnostic.home_list = exchange_error_outcome(error),
     }
     if !coverage.default_list_ok && coverage.homes_succeeded == 0 {
         return Err(AuthError::DeviceListUnavailable(diagnostic));
@@ -1238,6 +1293,56 @@ mod tests {
         }
     }
 
+    struct HttpStatusFixture {
+        calls: usize,
+        failure: HttpStatusClass,
+    }
+
+    impl Exchange for HttpStatusFixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            match request.path {
+                REDIRECT_PATH => Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#.to_vec()),
+                LOGIN_PATH => Ok(br#"{"resultCode":"1001","result":{"userID":"fixture-user","userToken":"fixture-token"}}"#.to_vec()),
+                DEVICE_PATH => Err(AuthError::HttpStatus(self.failure)),
+                HOMES_PATH => Ok(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#.to_vec()),
+                SHARED_DEVICE_PATH => Ok(br#"{"resultCode":"1107"}"#.to_vec()),
+                _ => panic!("no additional account requests allowed"),
+            }
+        }
+    }
+
+    #[test]
+    fn real_sequence_preserves_http_status_class_on_partial_home_success() {
+        for category in [
+            HttpStatusClass::AccessDenied,
+            HttpStatusClass::EndpointMissing,
+            HttpStatusClass::RateLimited,
+            HttpStatusClass::ServerUnavailable,
+            HttpStatusClass::Other,
+        ] {
+            let mut transport = HttpStatusFixture {
+                calls: 0,
+                failure: category,
+            };
+            let discovered =
+                discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+            assert_eq!(transport.calls, 5);
+            assert!(!discovered.coverage.default_list_ok);
+            assert!(discovered.coverage.home_list_ok);
+            assert_eq!(discovered.coverage.homes_succeeded, 1);
+            assert_eq!(
+                discovered.diagnostic.default_list,
+                ListOutcome::HttpStatus(category)
+            );
+            assert_eq!(discovered.summary().cameras, 0);
+            let message = discovered.diagnostic.safe_partial_text();
+            assert!(message.contains(category.safe_label()));
+            assert!(!message.contains("fixture-token"));
+            assert!(!message.contains("fixture-user"));
+        }
+    }
+
     #[test]
     fn response_diagnostics_separate_transient_rejection_and_malformed_shapes() {
         let cases = [
@@ -1310,7 +1415,7 @@ mod tests {
         assert_eq!(discovered.diagnostic.shared_attempted, 1);
         assert_eq!(discovered.summary().cameras, 0);
         let safe = discovered.diagnostic.safe_partial_text();
-        assert!(safe.contains("default camera list=HTTP/network failure"));
+        assert!(safe.contains("default camera list=network, TLS or timeout failure"));
         assert!(safe.contains("home list=accepted"));
         assert!(safe.contains("Partial results"));
         for secret in ["fixture-secret-token", "private-user", "account-password"] {
@@ -1589,6 +1694,57 @@ mod tests {
             PlatformStatus::TemporarilyUnavailable
         );
         assert_eq!(found.summary().cameras, 1);
+    }
+
+    #[test]
+    fn http_failures_are_classified_without_codes_bodies_or_session_data() {
+        for (code, expected) in [
+            (401, HttpStatusClass::AccessDenied),
+            (403, HttpStatusClass::AccessDenied),
+            (404, HttpStatusClass::EndpointMissing),
+            (405, HttpStatusClass::EndpointMissing),
+            (408, HttpStatusClass::RateLimited),
+            (429, HttpStatusClass::RateLimited),
+            (500, HttpStatusClass::ServerUnavailable),
+            (503, HttpStatusClass::ServerUnavailable),
+            (400, HttpStatusClass::Other),
+            (302, HttpStatusClass::Other),
+        ] {
+            assert_eq!(HttpStatusClass::from_status(code), expected);
+            let kind = exchange_error_outcome(AuthError::HttpStatus(expected));
+            assert_eq!(kind, ListOutcome::HttpStatus(expected));
+            let safe = DeviceListDiagnostic {
+                default_list: kind,
+                home_list: ListOutcome::Accepted,
+                ..Default::default()
+            }
+            .safe_partial_text();
+            assert!(safe.contains(expected.safe_label()));
+            for forbidden in [
+                "private-user",
+                "private-token",
+                "fixture-password",
+                "apis-usce.mearicloud.com",
+            ] {
+                assert!(!safe.contains(forbidden));
+            }
+        }
+        assert_eq!(
+            exchange_error_outcome(AuthError::Transport),
+            ListOutcome::TransportFailed
+        );
+        assert_ne!(
+            ListOutcome::TransportFailed.safe_label(),
+            ListOutcome::HttpStatus(HttpStatusClass::AccessDenied).safe_label()
+        );
+    }
+
+    #[test]
+    fn pinned_mobile_user_agent_is_explicit_and_is_not_a_camera_identity_claim() {
+        assert_eq!(
+            MOBILE_USER_AGENT,
+            "Mozilla/5.0 (Linux; U; Android 14; en-us; Pixel Build/UP1A.231105.001) AppleWebKit/533.1 (KHTML, like Gecko) Version/5.0 Mobile Safari/533.1"
+        );
     }
 
     #[test]
