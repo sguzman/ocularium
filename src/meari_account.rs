@@ -859,6 +859,17 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
         .and_then(serde_json::Value::as_str)
         .ok_or(AuthError::InvalidServer)?;
     let origin = allowed_api_origin(server).ok_or(AuthError::InvalidServer)?;
+    // The pinned Meari client adopts the canonical account country supplied
+    // by redirect before signing login, device, home and platform requests.
+    // Fail closed on malformed values; never substitute a guessed region.
+    if let Some(region) = response.pointer("/result/countryCode") {
+        let country = region
+            .as_str()
+            .filter(|code| code.len() == 2 && code.bytes().all(|b| b.is_ascii_uppercase()))
+            .ok_or(AuthError::InvalidReply)?;
+        credentials.country.clear();
+        credentials.country.push_str(country);
+    }
 
     let login_request = login_request(&credentials, origin.clone(), clock.next())?;
     // The plaintext account/password are no longer needed after constructing
@@ -1086,6 +1097,69 @@ mod tests {
             }
         }
     }
+    struct RedirectRegionFixture {
+        calls: usize,
+        invalid_country: bool,
+    }
+
+    impl Exchange for RedirectRegionFixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            match request.path {
+                REDIRECT_PATH => {
+                    assert_eq!(request.params.get("countryCode").unwrap(), "MX");
+                    if self.invalid_country {
+                        Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com","countryCode":"US/invalid"}}"#.to_vec())
+                    } else {
+                        Ok(br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com","countryCode":"US"}}"#.to_vec())
+                    }
+                }
+                LOGIN_PATH => {
+                    assert_eq!(request.params.get("countryCode").unwrap(), "US");
+                    assert_eq!(request.params.get("phoneCode").unwrap(), "52");
+                    Ok(br#"{"resultCode":"1001","result":{"userID":123,"userToken":"private-token"}}"#.to_vec())
+                }
+                DEVICE_PATH => {
+                    assert_eq!(request.params.get("countryCode").unwrap(), "US");
+                    assert_eq!(request.params.get("phoneCode").unwrap(), "52");
+                    Ok(br#"{"resultCode":"1001","result":{"ipc":[]}}"#.to_vec())
+                }
+                HOMES_PATH => {
+                    assert_eq!(request.params.get("countryCode").unwrap(), "US");
+                    assert_eq!(request.params.get("phoneCode").unwrap(), "52");
+                    Ok(br#"{"resultCode":"1001","result":{"homes":[]}}"#.to_vec())
+                }
+                _ => panic!("redirect region must not cause extra requests"),
+            }
+        }
+    }
+
+    #[test]
+    fn redirect_country_overrides_subsequent_signed_fields_without_new_requests() {
+        let mut transport = RedirectRegionFixture {
+            calls: 0,
+            invalid_country: false,
+        };
+        let result = discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        assert_eq!(transport.calls, 4);
+        assert!(result.coverage.default_list_ok);
+        assert!(result.coverage.home_list_ok);
+        assert_eq!(result.summary().cameras, 0);
+    }
+
+    #[test]
+    fn malformed_redirect_country_is_rejected_before_account_login() {
+        let mut transport = RedirectRegionFixture {
+            calls: 0,
+            invalid_country: true,
+        };
+        assert_eq!(
+            discover_account(&mut transport, &mut TestClock { n: 0 }, account()).err(),
+            Some(AuthError::InvalidReply)
+        );
+        assert_eq!(transport.calls, 1);
+    }
+
     #[test]
     fn reference_post_login_fields_match_independent_us_signature_vectors() {
         // Python hmac/sha1+base64 produced these vectors from the pinned
