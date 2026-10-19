@@ -240,7 +240,7 @@ impl DeviceListDiagnostic {
             self.shared_rejected,
             self.shared_malformed,
         )
-   }
+    }
 }
 
 /// Redacted completeness of an account's one-shot camera lookup.
@@ -1039,8 +1039,7 @@ mod tests {
         assert!(login.params.contains_key("localTime"));
 
         let default = device_request(&credentials, &session, stamp()).unwrap();
-        let homes =
-            signed_home_request(&credentials, &session, HOMES_PATH, None, stamp()).unwrap();
+        let homes = signed_home_request(&credentials, &session, HOMES_PATH, None, stamp()).unwrap();
         let shared = signed_home_request(
             &credentials,
             &session,
@@ -1076,8 +1075,7 @@ mod tests {
             default_response: Some(br#"{"resultCode":"1001","result":{"ipc":[]}}"#),
             home_response: Some(br#"{"resultCode":"1001","result":{}}"#),
         };
-        let result =
-            discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        let result = discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
         assert!(result.coverage.default_list_ok);
         assert!(result.coverage.home_list_ok);
         assert_eq!(result.coverage.homes_attempted, 0);
