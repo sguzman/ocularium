@@ -170,10 +170,16 @@ impl Clock for SystemClock {
         let bytes = entropy.as_bytes();
         let ca_sample = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let redirect_sample = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]);
+        // Capture the local UTC offset at this exact request timestamp.
+        let utc_offset_seconds = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
+            .map_or(0, |utc| {
+                utc.with_timezone(&chrono::Local).offset().local_minus_utc()
+            });
         Stamp {
             epoch_ms: millis,
             nonce: format!("{:06}", 100_000 + ca_sample % 900_000),
             redirect_nonce: format!("{:08}", redirect_sample % 100_000_000),
+            utc_offset_seconds,
         }
     }
 }
@@ -485,6 +491,8 @@ pub struct Stamp {
     pub nonce: String,
     /// Separate eight decimal digits for the redirect query.
     pub redirect_nonce: String,
+    /// System-local UTC offset at this request timestamp, in seconds.
+    pub utc_offset_seconds: i32,
 }
 
 /// Every request gets a fresh nonce from the caller, never a hard-coded one.
@@ -585,11 +593,20 @@ fn form_fields(
     {
         return Err(AuthError::InvalidInput);
     }
-    // Timestamp rendered in UTC explicitly. The reference uses local GMT
-    // offsets; server compatibility will need hardware validation.
-    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(stamp.epoch_ms)
+    // The pinned _base_params client renders the host's local civil time,
+    // with its GMT offset, rather than unconditional GMT+00:00.
+    // The clock captures the offset at this instant; fixture stamps remain
+    // independent of the host's timezone.
+    let offset = chrono::FixedOffset::east_opt(stamp.utc_offset_seconds)
         .ok_or(AuthError::InvalidInput)?;
-    let time = format!("{}GMT+00:00", dt.format("%Y-%m-%dT%H:%M:%S%.3f"));
+    let dt = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(stamp.epoch_ms)
+        .ok_or(AuthError::InvalidInput)?
+        .with_timezone(&offset);
+    let time = format!(
+        "{}GMT{}",
+        dt.format("%Y-%m-%dT%H:%M:%S%.3f"),
+        dt.format("%:z")
+    );
     Ok(BTreeMap::from([
         ("phoneType".into(), "i".into()),
         ("sourceApp".into(), "84".into()),
@@ -1044,6 +1061,7 @@ mod tests {
                 epoch_ms: 1_700_000_000_000,
                 nonce: format!("{:06}", 100_000 + self.n % 900_000),
                 redirect_nonce: format!("{:08}", self.n),
+                utc_offset_seconds: 0,
             }
         }
     }
@@ -1182,6 +1200,7 @@ mod tests {
             epoch_ms: 1_700_000_000_000,
             nonce: "123456".into(),
             redirect_nonce: "87654321".into(),
+            utc_offset_seconds: 0,
         };
         let session = Session {
             origin: "https://apis-usce.mearicloud.com".into(),
@@ -1823,6 +1842,36 @@ mod tests {
     }
 
     #[test]
+    fn local_gmt_timestamp_matches_reference_shape_and_preserves_epoch_ms() {
+        let stamp = Stamp {
+            epoch_ms: 1_700_000_000_000,
+            nonce: "123456".into(),
+            redirect_nonce: "87654321".into(),
+            utc_offset_seconds: 0,
+        };
+        let mut stamp = stamp;
+        for (offset, expected) in [
+            (0, "2023-11-14T22:13:20.000GMT+00:00"),
+            (-6 * 3600, "2023-11-14T16:13:20.000GMT-06:00"),
+            (5 * 3600 + 30 * 60, "2023-11-15T03:43:20.000GMT+05:30"),
+        ] {
+            stamp.utc_offset_seconds = offset;
+            let fields = form_fields(&stamp, &account()).unwrap();
+            assert_eq!(fields.get("timestamp").map(String::as_str), Some(expected));
+            assert_eq!(fields.get("t").map(String::as_str), Some("1700000000000"));
+            assert_eq!(
+                fields.get("signatureNonce").map(String::as_str),
+                Some("1700000000000")
+            );
+        }
+        stamp.utc_offset_seconds = i32::MAX;
+        assert!(matches!(
+            form_fields(&stamp, &account()),
+            Err(AuthError::InvalidInput)
+        ));
+    }
+
+    #[test]
     fn reference_numeric_nonces_are_separate_with_correct_wire_lengths() {
         let mut clock = SystemClock;
         for _ in 0..32 {
@@ -1848,6 +1897,7 @@ mod tests {
             epoch_ms: 1_700_000_000_000,
             nonce: "abcd12".into(),
             redirect_nonce: "01234567".into(),
+            utc_offset_seconds: 0,
         };
         assert_eq!(
             ca_headers(DEVICE_PATH, &stamp, Some("fictional-token")).err(),
@@ -1875,6 +1925,7 @@ mod tests {
             epoch_ms: 1_700_000_000_000,
             nonce: "123456".into(),
             redirect_nonce: "87654321".into(),
+            utc_offset_seconds: 0,
         };
         assert_eq!(
             user_account_cipher("test@example.com", REDIRECT_PATH, t.epoch_ms).unwrap(),

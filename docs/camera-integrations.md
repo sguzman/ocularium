@@ -74,6 +74,10 @@ The native `meari_devices` parser now treats an HTTP-successful response with `r
 
 The reference client updates `country_code` from a successful API redirect response before its login and signed catalog requests. Ocularium now follows that behavior only when the returned `result.countryCode` is a two-character uppercase ASCII country code. It does not change `phoneCode`, does not use country code to choose an unapproved API origin, and rejects invalid country values before sending any login. The existing HTTPS origin allowlist still applies. Synthetic tests prove the redirect country's effect on subsequent wire request fields and the absence of new requests/retries; no account data is recorded.
 
+## Local GMT offset in signed ANRAN timestamps (offline parity)
+
+The pinned reference `_base_params` creates `timestamp` from local civil time and includes its GMT offset, but Ocularium previously forced `GMT+00:00` on every machine. The native clock now captures the local offset for each timestamp and generates the corresponding signed value, with the same `t` / `signatureNonce` millisecond epoch. The independent UTC HMAC test vectors remain stable because fixture stamps explicitly use zero offset. Additional synthetic cases verify -06:00 and +05:30 offset formats and reject impossible offsets. No account login, retry, or new network request was added. This removes a wire-format mismatch but does not prove the old camera-list failure's cause.
+
 ## ANRAN nonce-format parity (no additional account traffic)
 
 The pinned reference generates an eight-digit decimal redirect query `nonce` separately from the six-digit decimal `X-Ca-Nonce` header. Authenticated requests use fresh six-digit header nonces. Ocularium previously reused one 12-character hexadecimal nonce for both. The native request builder now uses independent numeric values derived from OS-backed randomness and rejects malformed inputs. Synthetic tests validate both wire fields without accessing an account, changing the request budget, or claiming this caused the previous camera-list failure.
