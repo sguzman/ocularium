@@ -115,6 +115,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Use the machine-local GMT offset for signed ANRAN post-login timestamps, preserving epoch fields and deterministic synthetic UTC HMAC fixtures; no additional account requests
 - [x] Match reference default/shared camera-list numeric resultCode semantics (1001, 1023, 1107) and supported catalog shapes without relaxing login validation or increasing requests
 - [x] Recognize NVR/base/chime list structures without counting accessories as cameras; parse direct result arrays and string battery-type indicators offline
+- [x] Preserve correct post-login malformed-response diagnostics from bounded HTTPS transport at default/home/shared stages; synthetic fixtures verify redaction and no additional requests
 - [ ] Avoid additional real account logins until offline endpoint compatibility work justifies their session-disruption cost
 - [x] Correct signed post-login ANRAN request parity with pinned reference: omit login-only `localTime` from device, home, shared-home and platform HMAC fields; fixed independent US HMAC vectors and empty-home compatibility tests
 - [x] Reject successful-status device-list responses with unknown or absent nonempty catalog shapes rather than silently accepting them as zero cameras; retain valid empty result and explicitly empty known lists

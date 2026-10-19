@@ -267,7 +267,10 @@ impl ListOutcome {
 fn exchange_error_outcome(error: AuthError) -> ListOutcome {
     match error {
         AuthError::HttpStatus(status) => ListOutcome::HttpStatus(status),
-        _ => ListOutcome::TransportFailed,
+        AuthError::Transport => ListOutcome::TransportFailed,
+        // A bounded HTTPS response rejected for size/shape, or an invalid
+        // locally constructed request, is not a network/TLS timeout.
+        _ => ListOutcome::Malformed,
     }
 }
 
@@ -1022,7 +1025,12 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                                     Err(_) => diagnostic.shared_malformed += 1,
                                 }
                             }
-                            Err(_) => diagnostic.shared_transport_failed += 1,
+                            Err(error) => match exchange_error_outcome(error) {
+                                ListOutcome::TransportFailed | ListOutcome::HttpStatus(_) => {
+                                    diagnostic.shared_transport_failed += 1;
+                                }
+                                _ => diagnostic.shared_malformed += 1,
+                            },
                         }
                     }
                 }
@@ -1815,6 +1823,113 @@ mod tests {
             PlatformStatus::TemporarilyUnavailable
         );
         assert_eq!(found.summary().cameras, 1);
+    }
+
+    struct PostLoginExchangeFailureFixture {
+        calls: usize,
+        default_error: Option<AuthError>,
+        home_error: Option<AuthError>,
+        shared_error: Option<AuthError>,
+    }
+
+    impl Exchange for PostLoginExchangeFailureFixture {
+        fn exchange(&mut self, request: WireRequest) -> Result<Vec<u8>, AuthError> {
+            self.calls += 1;
+            match request.path {
+                REDIRECT_PATH => Ok(
+                    br#"{"resultCode":"1001","result":{"apiServer":"https://apis-usce.mearicloud.com"}}"#
+                        .to_vec(),
+                ),
+                LOGIN_PATH => Ok(
+                    br#"{"resultCode":"1001","result":{"userID":1,"userToken":"synthetic-token"}}"#
+                        .to_vec(),
+                ),
+                DEVICE_PATH => {
+                    if let Some(error) = self.default_error {
+                        return Err(error);
+                    }
+                    Ok(br#"{"resultCode":"1001","result":{"ipc":[{"deviceID":1,"snNum":"synthetic-camera"}]}}"#.to_vec())
+                }
+                HOMES_PATH => {
+                    if let Some(error) = self.home_error {
+                        return Err(error);
+                    }
+                    Ok(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#.to_vec())
+                }
+                SHARED_DEVICE_PATH => {
+                    if let Some(error) = self.shared_error {
+                        return Err(error);
+                    }
+                    Ok(br#"{"resultCode":"1107"}"#.to_vec())
+                }
+                _ => panic!("unexpected post-login request"),
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_https_reply_is_not_reported_as_network_failure() {
+        for (default_error, home_error, shared_error, expected_calls) in [
+            (Some(AuthError::InvalidReply), None, None, 5),
+            (None, Some(AuthError::InvalidReply), None, 4),
+            (None, None, Some(AuthError::InvalidReply), 5),
+            (
+                None,
+                None,
+                Some(AuthError::HttpStatus(HttpStatusClass::AccessDenied)),
+                5,
+            ),
+        ] {
+            let mut fixture = PostLoginExchangeFailureFixture {
+                calls: 0,
+                default_error,
+                home_error,
+                shared_error,
+            };
+            let result = discover_account(&mut fixture, &mut TestClock { n: 0 }, account())
+                .unwrap();
+            assert_eq!(fixture.calls, expected_calls);
+            assert_eq!(
+                result.diagnostic.default_list,
+                if default_error.is_some() {
+                    ListOutcome::Malformed
+                } else {
+                    ListOutcome::Accepted
+                }
+            );
+            assert_eq!(
+                result.diagnostic.home_list,
+                if home_error.is_some() {
+                    ListOutcome::Malformed
+                } else {
+                    ListOutcome::Accepted
+                }
+            );
+            assert_eq!(
+                result.diagnostic.shared_malformed,
+                usize::from(shared_error == Some(AuthError::InvalidReply))
+            );
+            assert_eq!(
+                result.diagnostic.shared_transport_failed,
+                usize::from(matches!(shared_error, Some(AuthError::HttpStatus(_))))
+            );
+            let safe = result.diagnostic.safe_partial_text();
+            assert!(!safe.contains("synthetic-token"));
+            assert!(!safe.contains("synthetic-camera"));
+            assert!(!safe.contains("synthetic-home"));
+            assert!(!safe.contains("apis-usce.mearicloud.com"));
+        }
+        for error in [
+            AuthError::InvalidReply,
+            AuthError::InvalidInput,
+            AuthError::InvalidServer,
+        ] {
+            assert_eq!(exchange_error_outcome(error), ListOutcome::Malformed);
+        }
+        assert_eq!(
+            exchange_error_outcome(AuthError::Transport),
+            ListOutcome::TransportFailed
+        );
     }
 
     #[test]
