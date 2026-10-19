@@ -429,6 +429,7 @@ pub enum CatalogError {
     NotAuthenticated,
     TemporarilyUnavailable,
     TooManyCameras,
+    UnexpectedDeviceListShape,
 }
 
 fn bounded_value(v: Option<&serde_json::Value>) -> Option<String> {
@@ -565,6 +566,27 @@ fn collect(
     Ok(())
 }
 
+/// A successful API status alone does not establish that we received a
+/// camera-list response. Reject unknown, nonempty response shapes rather
+/// than silently classifying a vendor/API mismatch as zero cameras.
+/// A genuinely empty `result: {}` is allowed, as in the pinned reference.
+/// Field names match the same accepted collections used by `collect`.
+fn recognizable_device_collection(value: &serde_json::Value, depth: usize) -> bool {
+    if depth > MAX_DEPTH {
+        return false;
+    }
+    match value {
+        serde_json::Value::Object(fields) => fields.iter().any(|(name, child)| {
+            ((category_for(name).is_some() || name == "deviceList") && child.is_array())
+                || recognizable_device_collection(child, depth + 1)
+        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(|child| recognizable_device_collection(child, depth + 1)),
+        _ => false,
+    }
+}
+
 pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog, CatalogError> {
     if json.len() > MAX_JSON_BYTES {
         return Err(CatalogError::Oversized);
@@ -575,6 +597,17 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
         Some("1001") => {}
         Some("1023") => return Err(CatalogError::TemporarilyUnavailable),
         _ => return Err(CatalogError::NotAuthenticated),
+    }
+    let result = value
+        .get("result")
+        .ok_or(CatalogError::UnexpectedDeviceListShape)?;
+    let empty_result = match result {
+        serde_json::Value::Object(fields) => fields.is_empty(),
+        serde_json::Value::Array(items) => items.is_empty(),
+        _ => return Err(CatalogError::UnexpectedDeviceListShape),
+    };
+    if !empty_result && !recognizable_device_collection(result, 0) {
+        return Err(CatalogError::UnexpectedDeviceListShape);
     }
     let mut records = BTreeMap::new();
     collect(&value, None, 0, &mut records)?;
@@ -975,6 +1008,52 @@ mod tests {
         assert_eq!(
             parse_authenticated_device_list(&vec![0; MAX_JSON_BYTES + 1]).err(),
             Some(CatalogError::Oversized)
+        );
+    }
+
+    #[test]
+    fn authenticated_result_requires_a_recognizable_camera_list_shape() {
+        // A vendor can return HTTP 200 and resultCode=1001 with an
+        // unrelated payload. That is NOT evidence of zero account cameras.
+        for invalid in [
+            r#"{"resultCode":"1001"}"#,
+            r#"{"resultCode":"1001","result":null}"#,
+            r#"{"resultCode":"1001","result":"ok"}"#,
+            r#"{"resultCode":"1001","result":{"unknownList":[]}}"#,
+            r#"{"resultCode":"1001","result":{"status":"ok"}}"#,
+            r#"{"resultCode":"1001","result":{"ipc":{}}}"#,
+            r#"{"resultCode":"1001","result":{"deviceList":null}}"#,
+        ] {
+            assert_eq!(
+                parse_authenticated_device_list(invalid.as_bytes()).err(),
+                Some(CatalogError::UnexpectedDeviceListShape)
+            );
+        }
+        // Both a truly empty result and explicitly empty known arrays are
+        // legitimate empty catalogs in the reference implementation.
+        for valid in [
+            r#"{"resultCode":"1001","result":{}}"#,
+            r#"{"resultCode":"1001","result":{"ipc":[]}}"#,
+            r#"{"resultCode":"1001","result":{"deviceList":[]}}"#,
+            r#"{"resultCode":"1001","result":{"homes":[{"deviceList":[]}]}}"#,
+        ] {
+            let catalog = parse_authenticated_device_list(valid.as_bytes()).unwrap();
+            assert_eq!(catalog.summary().cameras, 0);
+        }
+    }
+
+    #[test]
+    fn account_shape_mismatch_does_not_fabricate_camera_compatibility() {
+        let value = serde_json::json!({
+            "resultCode": "1001",
+            "result": {"unknownCameraCollection": [{
+                "deviceID": "private-device", "snNum": "private-serial",
+                "deviceP2P": "ppcs"
+            }]}
+        });
+        assert_eq!(
+            parse_authenticated_device_list(value.to_string().as_bytes()).err(),
+            Some(CatalogError::UnexpectedDeviceListShape)
         );
     }
 

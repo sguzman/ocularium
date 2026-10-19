@@ -1240,6 +1240,12 @@ mod tests {
                 ListOutcome::Malformed,
                 ListOutcome::TemporarilyUnavailable,
             ),
+            (
+                br#"{"resultCode":"1001","result":{"unknownList":[]}}"#.as_slice(),
+                br#"{"resultCode":"1001","result":{"homes":[]}}"#.as_slice(),
+                ListOutcome::Malformed,
+                ListOutcome::Accepted,
+            ),
         ];
         for (default, homes, default_expected, home_expected) in cases {
             let mut transport = ListFailureFixture {
