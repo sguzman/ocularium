@@ -11,7 +11,8 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     meari_account::{
-        self, AuthError, Credentials, DiscoveryCoverage, DiscoveryOptions, PlatformSummary,
+        self, AuthError, Credentials, DeviceListDiagnostic, DiscoveryCoverage, DiscoveryOptions,
+        PlatformSummary,
     },
     meari_devices::{CatalogCorrelation, CatalogSummary, MatchedPpcsSummary, PpcsMetadataSummary},
 };
@@ -64,6 +65,7 @@ struct DiscoveryReport {
     ppcs_metadata: PpcsMetadataSummary,
     matched_ppcs: MatchedPpcsSummary,
     coverage: DiscoveryCoverage,
+    diagnostic: DeviceListDiagnostic,
     platform: PlatformSummary,
 }
 
@@ -210,6 +212,7 @@ impl AnranPanel {
                 ppcs_metadata: discovery.ppcs_metadata_summary(),
                 matched_ppcs: discovery.matched_ppcs_summary(&saved_macs),
                 coverage: discovery.coverage,
+                diagnostic: discovery.diagnostic,
                 platform: discovery.platform,
             });
             for mac in saved_macs.iter_mut().flatten() {
@@ -374,6 +377,13 @@ impl AnranPanel {
                         Ok(report) => {
                             ui.label(report.platform.safe_text());
                             ui.label(report.coverage.safe_text());
+                            if !report.coverage.default_list_ok
+                                || !report.coverage.home_list_ok
+                                || report.coverage.homes_attempted
+                                    != report.coverage.homes_succeeded
+                            {
+                                ui.label(report.diagnostic.safe_partial_text());
+                            }
                             ui.label(report.catalog.safe_text());
                             ui.label(report.ppcs_metadata.safe_text());
                             ui.label(report.correlation.safe_text());

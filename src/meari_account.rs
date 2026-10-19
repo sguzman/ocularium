@@ -230,6 +230,21 @@ pub struct DeviceListDiagnostic {
 }
 
 impl DeviceListDiagnostic {
+    /// Expose fixed endpoint outcomes even when a shared-home request
+    /// succeeds and the overall catalog returns as a partial success.
+    /// No raw vendor messages, addresses, identifiers, or session secrets.
+    pub fn safe_partial_text(self) -> String {
+        format!(
+            "Post-login request outcomes: default camera list={}, home list={};              shared-home calls={}, HTTP/network failures={}, rejected={},              malformed={}. Partial results cannot establish that an account              contains no cameras.",
+            self.default_list.safe_label(),
+            self.home_list.safe_label(),
+            self.shared_attempted,
+            self.shared_transport_failed,
+            self.shared_rejected,
+            self.shared_malformed,
+        )
+    }
+
     pub fn safe_text(self) -> String {
         format!(
             "Login was accepted, but camera-list retrieval failed.              Default list: {}; home list: {}; shared-home lists attempted: {},              HTTP/network failures: {}, rejected: {}, unexpected responses: {}.              No retry was attempted. No camera compatibility conclusion.",
@@ -274,6 +289,7 @@ impl DiscoveryCoverage {
 pub struct AccountDiscovery {
     catalog: AuthorizedCatalog,
     pub coverage: DiscoveryCoverage,
+    pub diagnostic: DeviceListDiagnostic,
     pub platform: PlatformSummary,
 }
 
@@ -936,6 +952,7 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
     Ok(AccountDiscovery {
         catalog,
         coverage,
+        diagnostic,
         platform,
     })
 }
@@ -1262,6 +1279,51 @@ mod tests {
             assert_eq!(transport.calls, 4);
             assert!(!diag.safe_text().contains("private-user"));
         }
+    }
+
+    #[test]
+    fn partial_success_preserves_default_list_failure_cause_without_retries() {
+        let mut transport = ListFailureFixture {
+            calls: 0,
+            default_response: None,
+            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[]}}"#),
+        };
+        let discovered =
+            discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        assert_eq!(transport.calls, 4);
+        assert!(!discovered.coverage.default_list_ok);
+        assert!(discovered.coverage.home_list_ok);
+        assert_eq!(
+            discovered.diagnostic.default_list,
+            ListOutcome::TransportFailed
+        );
+        assert_eq!(discovered.diagnostic.home_list, ListOutcome::Accepted);
+        assert_eq!(discovered.summary().cameras, 0);
+        let safe = discovered.diagnostic.safe_partial_text();
+        assert!(safe.contains("default camera list=HTTP/network failure"));
+        assert!(safe.contains("home list=accepted"));
+        assert!(safe.contains("Partial results"));
+        for secret in ["fixture-secret-token", "private-user", "account-password"] {
+            assert!(!safe.contains(secret));
+        }
+    }
+
+    #[test]
+    fn partial_success_reports_rejected_default_list_separately_from_empty_home() {
+        let mut transport = ListFailureFixture {
+            calls: 0,
+            default_response: Some(br#"{"resultCode":"1002","result":{}}"#),
+            home_response: Some(br#"{"resultCode":"1001","result":{}}"#),
+        };
+        let discovered =
+            discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        assert_eq!(transport.calls, 4);
+        assert_eq!(discovered.diagnostic.default_list, ListOutcome::Rejected);
+        assert_eq!(discovered.diagnostic.home_list, ListOutcome::Accepted);
+        assert_eq!(discovered.diagnostic.shared_attempted, 0);
+        let safe = discovered.diagnostic.safe_partial_text();
+        assert!(safe.contains("default camera list=request rejected"));
+        assert!(!safe.contains("private-user"));
     }
 
     #[test]
