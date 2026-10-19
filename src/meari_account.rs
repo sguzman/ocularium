@@ -1842,30 +1842,65 @@ mod tests {
     }
 
     #[test]
-    fn local_gmt_timestamp_matches_reference_shape_and_preserves_epoch_ms() {
+    fn local_gmt_timestamp_matches_independent_hmac_vectors() {
+        // These signatures were calculated independently with Python's
+        // hmac/hashlib/base64, using the pinned ANRAN _base_params ordering.
         let mut stamp = Stamp {
             epoch_ms: 1_700_000_000_000,
             nonce: "123456".into(),
             redirect_nonce: "87654321".into(),
             utc_offset_seconds: 0,
         };
-        for (offset, expected) in [
-            (0, "2023-11-14T22:13:20.000GMT+00:00"),
-            (-6 * 3600, "2023-11-14T16:13:20.000GMT-06:00"),
-            (5 * 3600 + 30 * 60, "2023-11-15T03:43:20.000GMT+05:30"),
+        let credentials = Credentials {
+            account: Zeroizing::new("fictional@example.invalid".into()),
+            password: Zeroizing::new("fictional-password".into()),
+            country: "US".into(),
+            phone_code: "1".into(),
+        };
+        let session = Session {
+            origin: "https://apis-usce.mearicloud.com".into(),
+            user_id: Zeroizing::new("123".into()),
+            token: Zeroizing::new("fixture-secret-token".into()),
+        };
+        for (offset, expected_timestamp, expected_signature) in [
+            (0, "2023-11-14T22:13:20.000GMT+00:00", "amfS1DcXgdMWjUKaoBcchhqfrC4="),
+            (-6 * 3600, "2023-11-14T16:13:20.000GMT-06:00", "4ywY3Lt0aRQ+oSeUU6yaBnX0IvU="),
+            (
+                5 * 3600 + 30 * 60,
+                "2023-11-15T03:43:20.000GMT+05:30",
+                "dmk9WO1L711aedWOwe35A/Fe/CM=",
+            ),
         ] {
             stamp.utc_offset_seconds = offset;
-            let fields = form_fields(&stamp, &account()).unwrap();
-            assert_eq!(fields.get("timestamp").map(String::as_str), Some(expected));
+            let fields = form_fields(&stamp, &credentials).unwrap();
+            assert_eq!(
+                fields.get("timestamp").map(String::as_str),
+                Some(expected_timestamp)
+            );
             assert_eq!(fields.get("t").map(String::as_str), Some("1700000000000"));
             assert_eq!(
                 fields.get("signatureNonce").map(String::as_str),
                 Some("1700000000000")
             );
+            let request = device_request(
+                &credentials,
+                &session,
+                Stamp {
+                    epoch_ms: stamp.epoch_ms,
+                    nonce: stamp.nonce.clone(),
+                    redirect_nonce: stamp.redirect_nonce.clone(),
+                    utc_offset_seconds: offset,
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                request.params.get("signature").map(String::as_str),
+                Some(expected_signature)
+            );
         }
         stamp.utc_offset_seconds = i32::MAX;
         assert!(matches!(
-            form_fields(&stamp, &account()),
+            form_fields(&stamp, &credentials),
             Err(AuthError::InvalidInput)
         ));
     }
