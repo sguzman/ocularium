@@ -468,6 +468,27 @@ fn normalize_mac(raw: &str) -> Option<String> {
     )
 }
 
+/// Recognized Meari collections that are not cameras according to the
+/// pinned reference's CAMERA_CATEGORIES filter. They can legitimately be
+/// present in an authenticated device catalog without camera records.
+fn accessory_collection(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "nvr" | "nvr-neutral" | "base" | "chime"
+    )
+}
+
+/// The reference coerces default and shared-home resultCode to text before
+/// comparing 1001/1023/1107; avoid rejecting integer-valued vendor codes.
+/// Other API stages retain their existing stricter validation.
+pub(crate) fn result_code_is(response: &serde_json::Value, code: u64) -> bool {
+    match response.get("resultCode") {
+        Some(serde_json::Value::String(value)) => value == &code.to_string(),
+        Some(serde_json::Value::Number(value)) => value.as_u64() == Some(code),
+        _ => false,
+    }
+}
+
 fn category_for(key: &str) -> Option<Category> {
     match key.to_ascii_lowercase().as_str() {
         "ipc" => Some(Category::Wired),
@@ -483,7 +504,13 @@ fn parse_device(value: &serde_json::Value, category: Option<Category>) -> Option
     let device_id = bounded_value(obj.get("deviceID"))?;
     let serial = bounded_value(obj.get("snNum"))?;
     let category = category.unwrap_or_else(|| {
-        if obj.get("devTypeID").and_then(serde_json::Value::as_i64) == Some(5) {
+        // The reference accepts both numeric and string devTypeID.
+        let dev_type = obj.get("devTypeID").and_then(|value| match value {
+            serde_json::Value::Number(n) => n.as_i64(),
+            serde_json::Value::String(s) => s.parse::<i64>().ok(),
+            _ => None,
+        });
+        if dev_type == Some(5) {
             Category::Battery
         } else {
             Category::Wired
@@ -544,6 +571,11 @@ fn collect(
         }
         serde_json::Value::Object(fields) => {
             for (name, child) in fields {
+                if accessory_collection(name) {
+                    // Recognize these shapes without labeling NVRs, bases
+                    // or chimes as actual cameras.
+                    continue;
+                }
                 if let Some(cat) = category_for(name) {
                     if let Some(items) = child.as_array() {
                         for item in items {
@@ -582,7 +614,10 @@ fn recognizable_device_collection(
     match value {
         serde_json::Value::Object(fields) => {
             for (name, child) in fields {
-                if category_for(name).is_some() || name == "deviceList" {
+                if category_for(name).is_some()
+                    || accessory_collection(name)
+                    || name == "deviceList"
+                {
                     // Another valid list must not mask a malformed known list:
                     // silently accepting this could claim zero cameras.
                     if !child.is_array() {
@@ -610,10 +645,12 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
     }
     let value: serde_json::Value =
         serde_json::from_slice(json).map_err(|_| CatalogError::InvalidJson)?;
-    match value.get("resultCode").and_then(serde_json::Value::as_str) {
-        Some("1001") => {}
-        Some("1023") => return Err(CatalogError::TemporarilyUnavailable),
-        _ => return Err(CatalogError::NotAuthenticated),
+    if !result_code_is(&value, 1001) {
+        return Err(if result_code_is(&value, 1023) {
+            CatalogError::TemporarilyUnavailable
+        } else {
+            CatalogError::NotAuthenticated
+        });
     }
     let result = value
         .get("result")
@@ -623,10 +660,24 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
         serde_json::Value::Array(items) => items.is_empty(),
         _ => return Err(CatalogError::UnexpectedDeviceListShape),
     };
-    if !empty_result && !recognizable_device_collection(result, 0)? {
+    // The upstream walker also collects camera objects directly nested
+    // inside a result array, not just under ipc/deviceList keys.
+    let direct_array_records = match result {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(|item| parse_device(item, None).is_some()),
+        _ => false,
+    };
+    let recognized_collection = recognizable_device_collection(result, 0)?;
+    if !empty_result && !recognized_collection && !direct_array_records {
         return Err(CatalogError::UnexpectedDeviceListShape);
     }
     let mut records = BTreeMap::new();
+    if let serde_json::Value::Array(items) = result {
+        for item in items {
+            insert_camera(item, None, &mut records)?;
+        }
+    }
     collect(&value, None, 0, &mut records)?;
     let mut cameras = Vec::with_capacity(records.len());
     for (mut key, record) in records {
@@ -1061,6 +1112,83 @@ mod tests {
             let catalog = parse_authenticated_device_list(valid.as_bytes()).unwrap();
             assert_eq!(catalog.summary().cameras, 0);
         }
+    }
+
+    #[test]
+    fn numeric_catalog_result_codes_match_reference_without_relaxing_other_types() {
+        for successful in [
+            r#"{"resultCode":1001,"result":{"ipc":[{"deviceID":1,"snNum":"a"}]}}"#,
+            r#"{"resultCode":"1001","result":{"ipc":[{"deviceID":1,"snNum":"a"}]}}"#,
+        ] {
+            let catalog = parse_authenticated_device_list(successful.as_bytes()).unwrap();
+            assert_eq!(catalog.summary().cameras, 1);
+        }
+        for temporarily_unavailable in [
+            r#"{"resultCode":1023}"#,
+            r#"{"resultCode":"1023"}"#,
+        ] {
+            assert_eq!(
+                parse_authenticated_device_list(temporarily_unavailable.as_bytes()).err(),
+                Some(CatalogError::TemporarilyUnavailable)
+            );
+        }
+        for rejected in [
+            r#"{"resultCode":true,"result":{"ipc":[]}}"#,
+            r#"{"resultCode":1002,"result":{"ipc":[]}}"#,
+            r#"{"resultCode":"01001","result":{"ipc":[]}}"#,
+        ] {
+            assert_eq!(
+                parse_authenticated_device_list(rejected.as_bytes()).err(),
+                Some(CatalogError::NotAuthenticated)
+            );
+        }
+    }
+
+    #[test]
+    fn reference_accessory_collections_do_not_become_fake_cameras() {
+        let result = br#"{"resultCode":1001,"result":{
+            "NVR":[{"deviceID":1,"snNum":"not-camera"}],
+            "nvr-neutral":[],
+            "base":[{"deviceID":2,"snNum":"not-camera"}],
+            "chime":[{"deviceID":3,"snNum":"not-camera"}],
+            "ipc":[{"deviceID":4,"snNum":"camera"}]
+        }}"#;
+        let catalog = parse_authenticated_device_list(result).unwrap();
+        assert_eq!(catalog.summary().cameras, 1);
+        let accessories_only =
+            br#"{"resultCode":"1001","result":{"nvr":[],"base":[],"chime":[]}}"#;
+        assert_eq!(
+            parse_authenticated_device_list(accessories_only)
+                .unwrap()
+                .summary()
+                .cameras,
+            0
+        );
+        let malformed =
+            br#"{"resultCode":1001,"result":{"ipc":[],"base":{"deviceID":1}}}"#;
+        assert_eq!(
+            parse_authenticated_device_list(malformed).err(),
+            Some(CatalogError::UnexpectedDeviceListShape)
+        );
+    }
+
+    #[test]
+    fn reference_direct_result_array_and_string_device_type() {
+        let response = br#"{"resultCode":1001,"result":[
+            {"deviceID":1,"snNum":"battery","devTypeID":"5"},
+            {"deviceID":2,"snNum":"wired","devTypeID":0}
+        ]}"#;
+        let catalog = parse_authenticated_device_list(response).unwrap();
+        assert_eq!(catalog.summary().cameras, 2);
+        assert_eq!(catalog.summary().battery, 1);
+        assert_eq!(catalog.summary().wired, 1);
+        assert_eq!(
+            parse_authenticated_device_list(
+                br#"{"resultCode":1001,"result":[{"unrelated":"record"}]}"#
+            )
+            .err(),
+            Some(CatalogError::UnexpectedDeviceListShape)
+        );
     }
 
     #[test]

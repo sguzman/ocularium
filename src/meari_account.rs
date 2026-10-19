@@ -1000,10 +1000,7 @@ pub fn discover_account_with_options<T: Exchange, C: Clock>(
                                 // response, not a request error.
                                 match read_json(&response) {
                                     Ok(parsed)
-                                        if parsed
-                                            .get("resultCode")
-                                            .and_then(serde_json::Value::as_str)
-                                            == Some("1107") =>
+                                        if meari_devices::result_code_is(&parsed, 1107) =>
                                     {
                                         coverage.homes_succeeded += 1;
                                     }
@@ -1491,6 +1488,30 @@ mod tests {
             assert_eq!(transport.calls, 4);
             assert!(!diag.safe_text().contains("private-user"));
         }
+    }
+
+    #[test]
+    fn numeric_default_and_shared_home_statuses_do_not_hide_discovery() {
+        let mut transport = ListFailureFixture {
+            calls: 0,
+            default_response: Some(
+                br#"{"resultCode":1001,"result":{"ipc":[
+                    {"deviceID":1,"snNum":"sample"}
+                ]}}"#,
+            ),
+            home_response: Some(
+                br#"{"resultCode":"1001","result":{"homes":[{"homeID":"sample-home"}]}}"#,
+            ),
+            shared_response: Some(br#"{"resultCode":1107}"#),
+        };
+        let found = discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        assert_eq!(transport.calls, 5);
+        assert!(found.coverage.default_list_ok);
+        assert_eq!(found.diagnostic.default_list, ListOutcome::Accepted);
+        assert!(found.coverage.home_list_ok);
+        assert_eq!(found.coverage.homes_succeeded, 1);
+        assert_eq!(found.summary().cameras, 1);
+        assert_eq!(found.diagnostic.shared_rejected, 0);
     }
 
     #[test]
