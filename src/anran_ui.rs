@@ -237,7 +237,7 @@ impl AnranPanel {
             .show(ui, |ui| {
                 ui.label("Unofficial Meari/CloudPlus backend. Compatibility unverified.");
                 ui.label(
-                    "A login may invalidate the mobile app session. Only use an account you control.",
+                    "Repeated account QA has logged the phone app out after Ocularium login. Only sign in with the account owner's permission.",
                 );
                 ui.label(
                     "One consented login sequence: default devices, home list and up to                      8 shared-home lists. No automatic retries or saved credentials.",
@@ -344,7 +344,7 @@ impl AnranPanel {
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.checkbox(
                         &mut self.consent,
-                        "I authorize this login and accept possible mobile session logout",
+                        "I authorize this login and accept that it may sign out the phone app",
                     );
                 });
                 ui.horizontal(|ui| {

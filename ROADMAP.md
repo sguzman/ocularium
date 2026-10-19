@@ -107,6 +107,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Mock-tested native ANRAN redirect → one-shot login → signed default device-list handshake with independent legacy crypto vectors
 - [x] Diagnose post-login list failure by fixed, redacted default/home/shared-home endpoint outcome categories; preserve no-response-body, no-retry, no-credential-persistence boundary
 - [x] Preserve and display default/home endpoint outcome categories even on partial *successful* device discovery, without additional requests; tested against accepted home list plus rejected/network-failed default list
+- [x] Correct synthetic partial-success fixtures to include a genuinely successful shared-home response; explicitly warn that real ANRAN logins have evicted the mobile-app session during repeated QA
+- [ ] Avoid additional real account logins until offline endpoint compatibility work justifies their session-disruption cost
 - [x] Correct signed post-login ANRAN request parity with pinned reference: omit login-only `localTime` from device, home, shared-home and platform HMAC fields; fixed independent US HMAC vectors and empty-home compatibility tests
 - [x] Reject successful-status device-list responses with unknown or absent nonempty catalog shapes rather than silently accepting them as zero cameras; retain valid empty result and explicitly empty known lists
 - [ ] Verify whether the US-account device-list failure is resolved using **one separately consented** attempt when the owner is ready; no automatic retries, no speculative camera-access claims

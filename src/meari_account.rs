@@ -1091,6 +1091,7 @@ mod tests {
             calls: 0,
             default_response: Some(br#"{"resultCode":"1001","result":{"ipc":[]}}"#),
             home_response: Some(br#"{"resultCode":"1001","result":{}}"#),
+            shared_response: None,
         };
         let result = discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
         assert!(result.coverage.default_list_ok);
@@ -1192,6 +1193,7 @@ mod tests {
         calls: usize,
         default_response: Option<&'static [u8]>,
         home_response: Option<&'static [u8]>,
+        shared_response: Option<&'static [u8]>,
     }
 
     impl Exchange for ListFailureFixture {
@@ -1202,7 +1204,8 @@ mod tests {
                 LOGIN_PATH => Ok(br#"{"resultCode":"1001","result":{"userID":"private-user","userToken":"private-session-token"}}"#.to_vec()),
                 DEVICE_PATH => self.default_response.map(|body| body.to_vec()).ok_or(AuthError::Transport),
                 HOMES_PATH => self.home_response.map(|body| body.to_vec()).ok_or(AuthError::Transport),
-                _ => panic!("no unexpected retries or shared-home calls"),
+                SHARED_DEVICE_PATH => self.shared_response.map(|body| body.to_vec()).ok_or(AuthError::Transport),
+                _ => panic!("no unexpected retries or unknown calls"),
             }
         }
     }
@@ -1213,6 +1216,7 @@ mod tests {
             calls: 0,
             default_response: None,
             home_response: None,
+            shared_response: None,
         };
         let mut us = account();
         us.country = "US".into();
@@ -1267,6 +1271,7 @@ mod tests {
                 calls: 0,
                 default_response: Some(default),
                 home_response: Some(homes),
+            shared_response: None,
             };
             let failure = discover_account(&mut transport, &mut TestClock { n: 0 }, account())
                 .err()
@@ -1286,18 +1291,18 @@ mod tests {
         let mut transport = ListFailureFixture {
             calls: 0,
             default_response: None,
-            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[]}}"#),
+            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#),
+            shared_response: Some(br#"{"resultCode":"1107"}"#),
         };
         let discovered =
             discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
-        assert_eq!(transport.calls, 4);
+        assert_eq!(transport.calls, 5);
         assert!(!discovered.coverage.default_list_ok);
         assert!(discovered.coverage.home_list_ok);
-        assert_eq!(
-            discovered.diagnostic.default_list,
-            ListOutcome::TransportFailed
-        );
+        assert_eq!(discovered.coverage.homes_succeeded, 1);
+        assert_eq!(discovered.diagnostic.default_list, ListOutcome::TransportFailed);
         assert_eq!(discovered.diagnostic.home_list, ListOutcome::Accepted);
+        assert_eq!(discovered.diagnostic.shared_attempted, 1);
         assert_eq!(discovered.summary().cameras, 0);
         let safe = discovered.diagnostic.safe_partial_text();
         assert!(safe.contains("default camera list=HTTP/network failure"));
@@ -1313,14 +1318,16 @@ mod tests {
         let mut transport = ListFailureFixture {
             calls: 0,
             default_response: Some(br#"{"resultCode":"1002","result":{}}"#),
-            home_response: Some(br#"{"resultCode":"1001","result":{}}"#),
+            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#),
+            shared_response: Some(br#"{"resultCode":"1001","result":{"deviceList":[]}}"#),
         };
         let discovered =
             discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
-        assert_eq!(transport.calls, 4);
+        assert_eq!(transport.calls, 5);
         assert_eq!(discovered.diagnostic.default_list, ListOutcome::Rejected);
         assert_eq!(discovered.diagnostic.home_list, ListOutcome::Accepted);
-        assert_eq!(discovered.diagnostic.shared_attempted, 0);
+        assert_eq!(discovered.diagnostic.shared_attempted, 1);
+        assert_eq!(discovered.coverage.homes_succeeded, 1);
         let safe = discovered.diagnostic.safe_partial_text();
         assert!(safe.contains("default camera list=request rejected"));
         assert!(!safe.contains("private-user"));
@@ -1332,6 +1339,7 @@ mod tests {
             calls: 0,
             default_response: Some(br#"{"resultCode":"1001","result":{"ipc":[]}}"#),
             home_response: Some(br#"{"resultCode":"1001","result":{"homes":[]}}"#),
+            shared_response: None,
         };
         let result = discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
         assert!(result.coverage.default_list_ok);
