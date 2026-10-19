@@ -1863,8 +1863,16 @@ mod tests {
             token: Zeroizing::new("fixture-secret-token".into()),
         };
         for (offset, expected_timestamp, expected_signature) in [
-            (0, "2023-11-14T22:13:20.000GMT+00:00", "amfS1DcXgdMWjUKaoBcchhqfrC4="),
-            (-6 * 3600, "2023-11-14T16:13:20.000GMT-06:00", "4ywY3Lt0aRQ+oSeUU6yaBnX0IvU="),
+            (
+                0,
+                "2023-11-14T22:13:20.000GMT+00:00",
+                "amfS1DcXgdMWjUKaoBcchhqfrC4=",
+            ),
+            (
+                -6 * 3600,
+                "2023-11-14T16:13:20.000GMT-06:00",
+                "4ywY3Lt0aRQ+oSeUU6yaBnX0IvU=",
+            ),
             (
                 5 * 3600 + 30 * 60,
                 "2023-11-15T03:43:20.000GMT+05:30",
