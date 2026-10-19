@@ -571,20 +571,32 @@ fn collect(
 /// than silently classifying a vendor/API mismatch as zero cameras.
 /// A genuinely empty `result: {}` is allowed, as in the pinned reference.
 /// Field names match the same accepted collections used by `collect`.
-fn recognizable_device_collection(value: &serde_json::Value, depth: usize) -> bool {
+fn recognizable_device_collection(
+    value: &serde_json::Value,
+    depth: usize,
+) -> Result<bool, CatalogError> {
     if depth > MAX_DEPTH {
-        return false;
+        return Err(CatalogError::InvalidJson);
     }
+    let mut found = false;
     match value {
-        serde_json::Value::Object(fields) => fields.iter().any(|(name, child)| {
-            ((category_for(name).is_some() || name == "deviceList") && child.is_array())
-                || recognizable_device_collection(child, depth + 1)
-        }),
-        serde_json::Value::Array(items) => items
-            .iter()
-            .any(|child| recognizable_device_collection(child, depth + 1)),
-        _ => false,
+        serde_json::Value::Object(fields) => {
+            for (name, child) in fields {
+                if category_for(name).is_some() || name == "deviceList" {
+                    found |= child.is_array();
+                } else {
+                    found |= recognizable_device_collection(child, depth + 1)?;
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                found |= recognizable_device_collection(item, depth + 1)?;
+            }
+        }
+        _ => {}
     }
+    Ok(found)
 }
 
 pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog, CatalogError> {
@@ -606,7 +618,7 @@ pub fn parse_authenticated_device_list(json: &[u8]) -> Result<AuthorizedCatalog,
         serde_json::Value::Array(items) => items.is_empty(),
         _ => return Err(CatalogError::UnexpectedDeviceListShape),
     };
-    if !empty_result && !recognizable_device_collection(result, 0) {
+    if !empty_result && !recognizable_device_collection(result, 0)? {
         return Err(CatalogError::UnexpectedDeviceListShape);
     }
     let mut records = BTreeMap::new();

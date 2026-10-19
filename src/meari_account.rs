@@ -1228,7 +1228,7 @@ mod tests {
             ),
             (
                 br#"{"resultCode":"1002","userAccount":"private-user"}"#.as_slice(),
-                br#"{"resultCode":"1001","result":{}}"#.as_slice(),
+                br#"{"resultCode":"1001","result":{"homes":null}}"#.as_slice(),
                 ListOutcome::Rejected,
                 ListOutcome::Malformed,
             ),
