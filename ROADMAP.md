@@ -110,6 +110,7 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Correct synthetic partial-success fixtures to include a genuinely successful shared-home response; explicitly warn that real ANRAN logins have evicted the mobile-app session during repeated QA
 - [x] Match pinned community API's mobile User-Agent and classify post-login HTTP access-denied, endpoint-missing, throttled, 5xx and transport failures into fixed redacted outcome categories; synthetic one-shot tests, no added requests
 - [x] Accept and validate the canonical countryCode supplied by trusted ANRAN API redirect for subsequent signed calls, while preserving user-supplied dialing code; reject invalid overrides before login
+- [x] Match reference's distinct numeric nonces: eight-digit redirect query and six-digit X-Ca header, with offline wire-format tests and no extra requests
 - [ ] Avoid additional real account logins until offline endpoint compatibility work justifies their session-disruption cost
 - [x] Correct signed post-login ANRAN request parity with pinned reference: omit login-only `localTime` from device, home, shared-home and platform HMAC fields; fixed independent US HMAC vectors and empty-home compatibility tests
 - [x] Reject successful-status device-list responses with unknown or absent nonempty catalog shapes rather than silently accepting them as zero cameras; retain valid empty result and explicitly empty known lists
