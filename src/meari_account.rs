@@ -1843,13 +1843,12 @@ mod tests {
 
     #[test]
     fn local_gmt_timestamp_matches_reference_shape_and_preserves_epoch_ms() {
-        let stamp = Stamp {
+        let mut stamp = Stamp {
             epoch_ms: 1_700_000_000_000,
             nonce: "123456".into(),
             redirect_nonce: "87654321".into(),
             utc_offset_seconds: 0,
         };
-        let mut stamp = stamp;
         for (offset, expected) in [
             (0, "2023-11-14T22:13:20.000GMT+00:00"),
             (-6 * 3600, "2023-11-14T16:13:20.000GMT-06:00"),
