@@ -1886,8 +1886,8 @@ mod tests {
                 home_error,
                 shared_error,
             };
-            let result = discover_account(&mut fixture, &mut TestClock { n: 0 }, account())
-                .unwrap();
+            let result =
+                discover_account(&mut fixture, &mut TestClock { n: 0 }, account()).unwrap();
             assert_eq!(fixture.calls, expected_calls);
             assert_eq!(
                 result.diagnostic.default_list,
