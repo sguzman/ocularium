@@ -1271,7 +1271,7 @@ mod tests {
                 calls: 0,
                 default_response: Some(default),
                 home_response: Some(homes),
-            shared_response: None,
+                shared_response: None,
             };
             let failure = discover_account(&mut transport, &mut TestClock { n: 0 }, account())
                 .err()
@@ -1291,7 +1291,9 @@ mod tests {
         let mut transport = ListFailureFixture {
             calls: 0,
             default_response: None,
-            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#),
+            home_response: Some(
+                br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#,
+            ),
             shared_response: Some(br#"{"resultCode":"1107"}"#),
         };
         let discovered =
@@ -1300,7 +1302,10 @@ mod tests {
         assert!(!discovered.coverage.default_list_ok);
         assert!(discovered.coverage.home_list_ok);
         assert_eq!(discovered.coverage.homes_succeeded, 1);
-        assert_eq!(discovered.diagnostic.default_list, ListOutcome::TransportFailed);
+        assert_eq!(
+            discovered.diagnostic.default_list,
+            ListOutcome::TransportFailed
+        );
         assert_eq!(discovered.diagnostic.home_list, ListOutcome::Accepted);
         assert_eq!(discovered.diagnostic.shared_attempted, 1);
         assert_eq!(discovered.summary().cameras, 0);
@@ -1318,7 +1323,9 @@ mod tests {
         let mut transport = ListFailureFixture {
             calls: 0,
             default_response: Some(br#"{"resultCode":"1002","result":{}}"#),
-            home_response: Some(br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#),
+            home_response: Some(
+                br#"{"resultCode":"1001","result":{"homes":[{"homeID":"synthetic-home"}]}}"#,
+            ),
             shared_response: Some(br#"{"resultCode":"1001","result":{"deviceList":[]}}"#),
         };
         let discovered =
