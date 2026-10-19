@@ -240,7 +240,7 @@ impl DeviceListDiagnostic {
             self.shared_rejected,
             self.shared_malformed,
         )
-    }
+   }
 }
 
 /// Redacted completeness of an account's one-shot camera lookup.
@@ -525,7 +525,6 @@ fn form_fields(
         ("phoneCode".into(), credentials.phone_code.clone()),
         ("lngType".into(), "es".into()),
         ("t".into(), stamp.epoch_ms.to_string()),
-        ("localTime".into(), stamp.epoch_ms.to_string()),
         ("timestamp".into(), time),
         ("signatureMethod".into(), "HMAC-SHA1".into()),
         ("signatureVersion".into(), "1.0".into()),
@@ -559,6 +558,7 @@ fn redirect_request(credentials: &Credentials, stamp: Stamp) -> Result<WireReque
     params.remove("signatureMethod");
     params.remove("signatureVersion");
     params.remove("signatureNonce");
+    params.insert("localTime".into(), stamp.epoch_ms.to_string());
     params.insert("nonce".into(), stamp.nonce.clone());
     params.insert("partnerId".into(), "84".into());
     params.insert(
@@ -598,6 +598,7 @@ fn login_request(
     ] {
         params.remove(key);
     }
+    params.insert("localTime".into(), stamp.epoch_ms.to_string());
     params.insert(
         "userAccount".into(),
         user_account_cipher(&credentials.account, LOGIN_PATH, stamp.epoch_ms)?,
@@ -697,10 +698,17 @@ fn parse_home_ids(bytes: &[u8]) -> Result<HomeIds, ListOutcome> {
             },
         );
     }
-    let homes = result
-        .pointer("/result/homes")
-        .and_then(serde_json::Value::as_array)
+    let home_result = result
+        .get("result")
+        .and_then(serde_json::Value::as_object)
         .ok_or(ListOutcome::Malformed)?;
+    // The pinned reference treats a successful response without "homes"
+    // as an empty household, not an authentication failure.
+    let homes = match home_result.get("homes") {
+        Some(serde_json::Value::Array(homes)) => homes.as_slice(),
+        None => &[],
+        _ => return Err(ListOutcome::Malformed),
+    };
     let mut ids = Vec::new();
     let mut truncated = homes.len() > MAX_SHARED_HOMES;
     for home in homes {
@@ -1007,6 +1015,76 @@ mod tests {
         }
     }
     #[test]
+    fn reference_post_login_fields_match_independent_us_signature_vectors() {
+        // Python hmac/sha1+base64 produced these vectors from the pinned
+        // upstream _base_params/_sign_params shape, using a fictional token.
+        let credentials = Credentials {
+            account: Zeroizing::new("fictional@example.invalid".into()),
+            password: Zeroizing::new("fictional-password".into()),
+            country: "US".into(),
+            phone_code: "1".into(),
+        };
+        let stamp = || Stamp {
+            epoch_ms: 1_700_000_000_000,
+            nonce: "12345678".into(),
+        };
+        let session = Session {
+            origin: "https://apis-usce.mearicloud.com".into(),
+            user_id: Zeroizing::new("123".into()),
+            token: Zeroizing::new("fixture-secret-token".into()),
+        };
+        let redirect = redirect_request(&credentials, stamp()).unwrap();
+        let login = login_request(&credentials, session.origin.clone(), stamp()).unwrap();
+        assert!(redirect.params.contains_key("localTime"));
+        assert!(login.params.contains_key("localTime"));
+
+        let default = device_request(&credentials, &session, stamp()).unwrap();
+        let homes =
+            signed_home_request(&credentials, &session, HOMES_PATH, None, stamp()).unwrap();
+        let shared = signed_home_request(
+            &credentials,
+            &session,
+            SHARED_DEVICE_PATH,
+            Some("fictional-home"),
+            stamp(),
+        )
+        .unwrap();
+        let platform = platform_request(&credentials, &session, stamp()).unwrap();
+        for request in [&default, &homes, &shared, &platform] {
+            assert!(!request.params.contains_key("localTime"));
+            assert_eq!(request.params.get("countryCode").unwrap(), "US");
+            assert_eq!(request.params.get("phoneCode").unwrap(), "1");
+            assert_eq!(request.params.get("userID").unwrap(), "123");
+        }
+        assert_eq!(
+            default.params.get("signature").unwrap(),
+            "amfS1DcXgdMWjUKaoBcchhqfrC4="
+        );
+        assert_eq!(
+            homes.params.get("signature").unwrap(),
+            "q13w/SSCemcv7ExQMse7r6IE0MU="
+        );
+        assert_eq!(default.params.get("funSwitch").unwrap(), "1");
+        assert!(!homes.params.contains_key("funSwitch"));
+        assert_eq!(shared.params.get("homeID").unwrap(), "fictional-home");
+    }
+
+    #[test]
+    fn valid_home_response_with_omitted_homes_is_empty_without_extra_calls() {
+        let mut transport = ListFailureFixture {
+            calls: 0,
+            default_response: Some(br#"{"resultCode":"1001","result":{"ipc":[]}}"#),
+            home_response: Some(br#"{"resultCode":"1001","result":{}}"#),
+        };
+        let result =
+            discover_account(&mut transport, &mut TestClock { n: 0 }, account()).unwrap();
+        assert!(result.coverage.default_list_ok);
+        assert!(result.coverage.home_list_ok);
+        assert_eq!(result.coverage.homes_attempted, 0);
+        assert_eq!(transport.calls, 4);
+    }
+
+    #[test]
     fn one_shot_anran_login_queries_default_list_and_home_list() {
         let mut transport = Fixture { calls: 0 };
         let mut clock = TestClock { n: 0 };
@@ -1278,7 +1356,11 @@ mod tests {
         assert!(homes.truncated);
         assert_eq!(homes.ids[0].as_str(), "first");
         assert_eq!(homes.ids[1].as_str(), "1");
-        assert!(parse_home_ids(br#"{"resultCode":"1001","result":{}}"#).is_err());
+        assert!(parse_home_ids(br#"{"resultCode":"1001","result":{}}"#)
+            .unwrap()
+            .ids
+            .is_empty());
+        assert!(parse_home_ids(br#"{"resultCode":"1001","result":{"homes":null}}"#).is_err());
         assert!(parse_home_ids(br#"{"resultCode":"1023"}"#).is_err());
     }
 

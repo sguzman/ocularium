@@ -106,6 +106,8 @@ The first target is a **native Rust + egui desktop app** for EndeavourOS/Hyprlan
 - [x] Offline bounded parsing of successful Meari camera device-list responses (default + shared homes), session-only transport/key data, redacted summaries, MAC-only correlation
 - [x] Mock-tested native ANRAN redirect → one-shot login → signed default device-list handshake with independent legacy crypto vectors
 - [x] Diagnose post-login list failure by fixed, redacted default/home/shared-home endpoint outcome categories; preserve no-response-body, no-retry, no-credential-persistence boundary
+- [x] Correct signed post-login ANRAN request parity with pinned reference: omit login-only `localTime` from device, home, shared-home and platform HMAC fields; fixed independent US HMAC vectors and empty-home compatibility tests
+- [ ] Verify whether the US-account device-list failure is resolved using **one separately consented** attempt when the owner is ready; no automatic retries, no speculative camera-access claims
 - [ ] Investigate actual US-account device-list rejection/transport incompatibility using diagnostics from one newly consented QA attempt only when warranted; do not interpret current failure as bad credentials or incompatible hardware
 - [x] Bounded TLS-verifying transport restricted to vendor HTTPS domains, with proxy/redirect disabled, no GUI connection or automatic requests
 - [x] Add a consent-gated, one-shot ANRAN account panel with masked transient fields and count-only results
