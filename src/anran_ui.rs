@@ -583,6 +583,88 @@ mod tests {
     }
 
     #[test]
+    fn restored_keyring_fields_never_consent_to_a_vendor_login() {
+        let mut panel = AnranPanel {
+            paired_app: PairedApp::Anran,
+            camera_listed_in_app: true,
+            ..Default::default()
+        };
+        let (tx, rx) = mpsc::channel();
+        panel.keyring_rx = Some(rx);
+        tx.send((
+            panel.keyring_epoch,
+            KeyringReply::Loaded(Ok(Some(KeyringAccount {
+                username: Zeroizing::new("example@example.invalid".into()),
+                password: Zeroizing::new("fictional-secret".into()),
+                country: "US".into(),
+                dial_code: "1".into(),
+            }))),
+        ))
+        .unwrap();
+        panel.poll_keyring();
+        assert_eq!(panel.account.as_str(), "example@example.invalid");
+        assert_eq!(panel.password.as_str(), "fictional-secret");
+        assert_eq!(panel.country, "US");
+        assert_eq!(panel.dialing_code, "1");
+        assert!(!panel.consent);
+        assert!(!panel.ready());
+        assert!(panel.rx.is_none());
+        assert!(panel.keyring_rx.is_none());
+    }
+
+    #[test]
+    fn stale_keyring_reply_cannot_repopulate_another_app() {
+        let mut panel = AnranPanel::default();
+        panel.set_paired_app(PairedApp::Anran);
+        panel.keyring_restore_pending = false;
+        let old_epoch = panel.keyring_epoch;
+        let (tx, rx) = mpsc::channel();
+        panel.keyring_rx = Some(rx);
+        panel.set_paired_app(PairedApp::Arcctv);
+        tx.send((
+            old_epoch,
+            KeyringReply::Loaded(Ok(Some(KeyringAccount {
+                username: Zeroizing::new("old@example.invalid".into()),
+                password: Zeroizing::new("unused".into()),
+                country: "US".into(),
+                dial_code: "1".into(),
+            }))),
+        ))
+        .unwrap();
+        panel.poll_keyring();
+        assert!(panel.account.is_empty());
+        assert!(panel.password.is_empty());
+        assert_eq!(panel.paired_app, PairedApp::Arcctv);
+        assert!(!panel.consent);
+    }
+
+    #[test]
+    fn keyring_restore_does_not_overwrite_manual_fields() {
+        let mut panel = AnranPanel {
+            paired_app: PairedApp::Anran,
+            account: Zeroizing::new("manual@example.invalid".into()),
+            password: Zeroizing::new("manual-password".into()),
+            ..Default::default()
+        };
+        let (tx, rx) = mpsc::channel();
+        panel.keyring_rx = Some(rx);
+        tx.send((
+            panel.keyring_epoch,
+            KeyringReply::Loaded(Ok(Some(KeyringAccount {
+                username: Zeroizing::new("stored@example.invalid".into()),
+                password: Zeroizing::new("stored-password".into()),
+                country: "US".into(),
+                dial_code: "1".into(),
+            }))),
+        ))
+        .unwrap();
+        panel.poll_keyring();
+        assert_eq!(panel.account.as_str(), "manual@example.invalid");
+        assert_eq!(panel.password.as_str(), "manual-password");
+        assert!(!panel.consent);
+    }
+
+    #[test]
     fn anran_brand_never_implies_anran_app_backend() {
         let all = PairedApp::ALL;
         assert_eq!(
