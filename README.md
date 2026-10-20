@@ -42,6 +42,9 @@ The household inventory distinguishes **user-provided identity** from **live acc
 
 ## ANRAN account keyring (optional, local)
 
+The local-only, first-use test is documented in [ANRAN keyring QA](docs/anran-keyring-qa.md). It deliberately does not log in to the ANRAN service; stop at the first unexpected result.
+
+
 The experimental ANRAN panel now offers **Save ANRAN account to Linux keyring**, which saves and then immediately reads back the entry before reporting success. It stores one account, password, country and dial code in the logged-in user's Secret Service keyring via the optional `secret-tool` utility (EndeavourOS: `libsecret`). Selecting the ANRAN app on a later launch restores saved fields automatically, and a completed login restores them again for subsequent use. No automatic login occurs, and the app still requires explicit camera-in-app confirmation and consent for each attempt. The app registry, repository, copied reports and logs never contain account credentials, and there is no plaintext fallback if the keyring is unavailable. **Forget saved ANRAN account** deletes the item; **Clear form and result (keep keyring)** clears the current fields only. Saving the first time requires entering the credentials once because previous versions intentionally discarded them. No household account access or live camera probing was used to implement this feature.
 
 ## ONVIF capability investigation
