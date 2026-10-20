@@ -180,9 +180,15 @@ impl AnranPanel {
     }
 
     fn save_keyring(&mut self) {
-        if self.busy() || self.keyring_rx.is_some()
+        if self.busy()
+            || self.keyring_rx.is_some()
             || self.paired_app != PairedApp::Anran
-            || !valid(&self.account, &self.password, &self.country, &self.dialing_code)
+            || !valid(
+                &self.account,
+                &self.password,
+                &self.country,
+                &self.dialing_code,
+            )
         {
             return;
         }
@@ -219,8 +225,8 @@ impl AnranPanel {
     fn poll_keyring(&mut self) {
         if let Some(rx) = self.keyring_rx.take() {
             match rx.try_recv() {
-                Ok((epoch, reply)) if epoch == self.keyring_epoch
-                    && self.paired_app == PairedApp::Anran =>
+                Ok((epoch, reply))
+                    if epoch == self.keyring_epoch && self.paired_app == PairedApp::Anran =>
                 {
                     match reply {
                         KeyringReply::Loaded(Ok(Some(account))) => {
@@ -230,13 +236,16 @@ impl AnranPanel {
                                 self.password = account.password;
                                 self.country = account.country;
                                 self.dialing_code = account.dial_code;
-                                self.keyring_message = Some("ANRAN account restored from Linux keyring. No login was sent.");
+                                self.keyring_message = Some(
+                                    "ANRAN account restored from Linux keyring. No login was sent.",
+                                );
                             } else {
                                 self.keyring_message = Some("Saved ANRAN account available; existing form values were preserved.");
                             }
                         }
                         KeyringReply::Loaded(Ok(None)) => {
-                            self.keyring_message = Some("No saved ANRAN account in the Linux keyring.");
+                            self.keyring_message =
+                                Some("No saved ANRAN account found (or keyring locked). Save once to enable recall.");
                         }
                         KeyringReply::Loaded(Err(error))
                         | KeyringReply::Saved(Err(error))
@@ -244,21 +253,25 @@ impl AnranPanel {
                             self.keyring_message = Some(error.label());
                         }
                         KeyringReply::Saved(Ok(())) => {
-                            self.keyring_message = Some("ANRAN credentials saved in Linux keyring. No login was sent.");
+                            self.keyring_message = Some(
+                                "ANRAN credentials saved in Linux keyring. No login was sent.",
+                            );
                         }
                         KeyringReply::Deleted(Ok(())) => {
                             self.account.clear();
                             self.password.clear();
                             self.consent = false;
                             self.result = None;
-                            self.keyring_message = Some("Saved ANRAN account deleted from Linux keyring.");
+                            self.keyring_message =
+                                Some("Saved ANRAN account deleted from Linux keyring.");
                         }
                     }
                 }
                 Ok(_) => {}
                 Err(TryRecvError::Empty) => self.keyring_rx = Some(rx),
                 Err(TryRecvError::Disconnected) => {
-                    self.keyring_message = Some("Linux keyring operation stopped; no login was sent.");
+                    self.keyring_message =
+                        Some("Linux keyring operation stopped; no login was sent.");
                 }
             }
         }
