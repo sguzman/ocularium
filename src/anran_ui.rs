@@ -254,7 +254,7 @@ impl AnranPanel {
                         }
                         KeyringReply::Saved(Ok(())) => {
                             self.keyring_message = Some(
-                                "ANRAN credentials saved in Linux keyring. No login was sent.",
+                                "ANRAN credentials saved and verified in Linux keyring. No login was sent.",
                             );
                         }
                         KeyringReply::Deleted(Ok(())) => {

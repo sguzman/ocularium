@@ -55,6 +55,13 @@ impl Drop for Owned {
     }
 }
 impl Account {
+    fn same_as(&self, other: &Self) -> bool {
+        self.username.as_str() == other.username.as_str()
+            && self.password.as_str() == other.password.as_str()
+            && self.country == other.country
+            && self.dial_code == other.dial_code
+    }
+
     fn encode(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
         let value = Borrowed {
             username: &self.username,
@@ -107,10 +114,14 @@ pub fn save(value: Account) -> Result<(), Error> {
         .take()
         .is_some_and(|mut stream| stream.write_all(&payload).is_ok());
     let success = child.wait().map_err(|_| Error::Failed)?.success();
-    if sent && success {
-        Ok(())
-    } else {
-        Err(Error::Failed)
+    if !sent || !success {
+        return Err(Error::Failed);
+    }
+    // Do not tell the user their account was saved unless we can independently
+    // recover precisely that record from the same keyring selector.
+    match load()? {
+        Some(restored) if restored.same_as(&value) => Ok(()),
+        _ => Err(Error::Failed),
     }
 }
 fn command(action: &'static str) -> Command {
@@ -166,6 +177,10 @@ mod tests {
         let restored = Account::decode(&payload).unwrap();
         assert_eq!(&*restored.username, "fixture@example.invalid");
         assert_eq!(&*restored.password, "example-pass");
+        assert!(restored.same_as(&item));
+        let mut wrong = Account::decode(&payload).unwrap();
+        wrong.password = Zeroizing::new("different-fictional-password".into());
+        assert!(!restored.same_as(&wrong));
         assert!(matches!(
             Account::decode(&vec![0; LIMIT + 1]),
             Err(Error::Invalid)
