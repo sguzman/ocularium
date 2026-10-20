@@ -1,3 +1,4 @@
+mod anran_keyring;
 mod anran_ui;
 mod app;
 mod classify;

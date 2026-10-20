@@ -10,6 +10,7 @@ use eframe::egui;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
+    anran_keyring::{self, Account as KeyringAccount, Error as KeyringError},
     meari_account::{
         self, AuthError, Credentials, DeviceListDiagnostic, DiscoveryCoverage, DiscoveryOptions,
         PlatformSummary,
@@ -69,6 +70,12 @@ struct DiscoveryReport {
     platform: PlatformSummary,
 }
 
+enum KeyringReply {
+    Loaded(Result<Option<KeyringAccount>, KeyringError>),
+    Saved(Result<(), KeyringError>),
+    Deleted(Result<(), KeyringError>),
+}
+
 pub struct AnranPanel {
     account: Zeroizing<String>,
     password: Zeroizing<String>,
@@ -80,6 +87,10 @@ pub struct AnranPanel {
     consent: bool,
     rx: Option<Receiver<Result<DiscoveryReport, AuthError>>>,
     result: Option<Result<DiscoveryReport, AuthError>>,
+    keyring_rx: Option<Receiver<(u64, KeyringReply)>>,
+    keyring_epoch: u64,
+    keyring_restore_pending: bool,
+    keyring_message: Option<&'static str>,
 }
 
 impl Default for AnranPanel {
@@ -95,6 +106,10 @@ impl Default for AnranPanel {
             consent: false,
             rx: None,
             result: None,
+            keyring_rx: None,
+            keyring_epoch: 0,
+            keyring_restore_pending: false,
+            keyring_message: None,
         }
     }
 }
@@ -139,6 +154,9 @@ impl AnranPanel {
             return;
         }
         self.paired_app = new_app;
+        self.keyring_epoch = self.keyring_epoch.wrapping_add(1);
+        self.keyring_restore_pending = new_app == PairedApp::Anran;
+        self.keyring_message = None;
         // Do not carry consent or entered credentials across app families.
         self.account.clear();
         self.password.clear();
@@ -146,6 +164,107 @@ impl AnranPanel {
         self.camera_listed_in_app = false;
         self.inspect_platform = false;
         self.result = None;
+    }
+
+    fn start_keyring_restore(&mut self) {
+        if self.keyring_rx.is_some() || self.paired_app != PairedApp::Anran {
+            return;
+        }
+        self.keyring_restore_pending = false;
+        let epoch = self.keyring_epoch;
+        let (tx, rx) = mpsc::channel();
+        self.keyring_rx = Some(rx);
+        thread::spawn(move || {
+            let _ = tx.send((epoch, KeyringReply::Loaded(anran_keyring::load())));
+        });
+    }
+
+    fn save_keyring(&mut self) {
+        if self.busy() || self.keyring_rx.is_some()
+            || self.paired_app != PairedApp::Anran
+            || !valid(&self.account, &self.password, &self.country, &self.dialing_code)
+        {
+            return;
+        }
+        let data = KeyringAccount {
+            username: Zeroizing::new((*self.account).clone()),
+            password: Zeroizing::new((*self.password).clone()),
+            country: self.country.clone(),
+            dial_code: self.dialing_code.clone(),
+        };
+        self.keyring_message = None;
+        self.keyring_restore_pending = false;
+        let epoch = self.keyring_epoch;
+        let (tx, rx) = mpsc::channel();
+        self.keyring_rx = Some(rx);
+        thread::spawn(move || {
+            let _ = tx.send((epoch, KeyringReply::Saved(anran_keyring::save(data))));
+        });
+    }
+
+    fn delete_keyring(&mut self) {
+        if self.busy() || self.keyring_rx.is_some() || self.paired_app != PairedApp::Anran {
+            return;
+        }
+        self.keyring_message = None;
+        self.keyring_restore_pending = false;
+        let epoch = self.keyring_epoch;
+        let (tx, rx) = mpsc::channel();
+        self.keyring_rx = Some(rx);
+        thread::spawn(move || {
+            let _ = tx.send((epoch, KeyringReply::Deleted(anran_keyring::delete())));
+        });
+    }
+
+    fn poll_keyring(&mut self) {
+        if let Some(rx) = self.keyring_rx.take() {
+            match rx.try_recv() {
+                Ok((epoch, reply)) if epoch == self.keyring_epoch
+                    && self.paired_app == PairedApp::Anran =>
+                {
+                    match reply {
+                        KeyringReply::Loaded(Ok(Some(account))) => {
+                            // Only restore empty fields; never overwrite manual edits.
+                            if self.account.is_empty() && self.password.is_empty() {
+                                self.account = account.username;
+                                self.password = account.password;
+                                self.country = account.country;
+                                self.dialing_code = account.dial_code;
+                                self.keyring_message = Some("ANRAN account restored from Linux keyring. No login was sent.");
+                            } else {
+                                self.keyring_message = Some("Saved ANRAN account available; existing form values were preserved.");
+                            }
+                        }
+                        KeyringReply::Loaded(Ok(None)) => {
+                            self.keyring_message = Some("No saved ANRAN account in the Linux keyring.");
+                        }
+                        KeyringReply::Loaded(Err(error))
+                        | KeyringReply::Saved(Err(error))
+                        | KeyringReply::Deleted(Err(error)) => {
+                            self.keyring_message = Some(error.label());
+                        }
+                        KeyringReply::Saved(Ok(())) => {
+                            self.keyring_message = Some("ANRAN credentials saved in Linux keyring. No login was sent.");
+                        }
+                        KeyringReply::Deleted(Ok(())) => {
+                            self.account.clear();
+                            self.password.clear();
+                            self.consent = false;
+                            self.result = None;
+                            self.keyring_message = Some("Saved ANRAN account deleted from Linux keyring.");
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => self.keyring_rx = Some(rx),
+                Err(TryRecvError::Disconnected) => {
+                    self.keyring_message = Some("Linux keyring operation stopped; no login was sent.");
+                }
+            }
+        }
+        if self.keyring_restore_pending && self.keyring_rx.is_none() && !self.busy() {
+            self.start_keyring_restore();
+        }
     }
 
     pub fn poll(&mut self) {
@@ -158,6 +277,7 @@ impl AnranPanel {
                 }
             }
         }
+        self.poll_keyring();
     }
 
     fn ready(&self) -> bool {
@@ -187,6 +307,9 @@ impl AnranPanel {
         };
         self.consent = false;
         self.result = None;
+        // Restore saved values after this one-shot lookup finishes, without
+        // reusing consent or sending another network request.
+        self.keyring_restore_pending = true;
         Some(credentials)
     }
 
@@ -243,9 +366,12 @@ impl AnranPanel {
                     "Repeated account QA has logged the phone app out after Ocularium login. Only sign in with the account owner's permission.",
                 );
                 ui.label(
-                    "One consented login sequence: default devices, home list and up to                      8 shared-home lists. No automatic retries or saved credentials.",
+                    "One consented login sequence: default devices, home list and up to                      8 shared-home lists. No automatic retries or automatic login.",
                 );
                 ui.small("Country and dialing code must match the account registration region.");
+                if self.keyring_rx.is_some() || self.keyring_restore_pending {
+                    ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                }
                 let busy = self.busy();
                 let mut selected_app = self.paired_app;
                 ui.horizontal(|ui| {
@@ -305,22 +431,23 @@ impl AnranPanel {
                         review_saved_requested = true;
                     }
                 }
+                let keyring_busy = self.keyring_rx.is_some() || self.keyring_restore_pending;
                 ui.horizontal(|ui| {
                     ui.label("Country");
                     ui.add_enabled(
-                        !busy,
+                        !busy && !keyring_busy,
                         egui::TextEdit::singleline(&mut self.country).desired_width(45.0),
                     );
                     ui.label("Dial code");
                     ui.add_enabled(
-                        !busy,
+                        !busy && !keyring_busy,
                         egui::TextEdit::singleline(&mut self.dialing_code).desired_width(45.0),
                     );
                 });
                 ui.horizontal(|ui| {
                     ui.label("Account");
                     ui.add_enabled(
-                        !busy,
+                        !busy && !keyring_busy,
                         egui::TextEdit::singleline(&mut *self.account)
                             .password(true)
                             .desired_width(240.0),
@@ -329,12 +456,27 @@ impl AnranPanel {
                 ui.horizontal(|ui| {
                     ui.label("Password");
                     ui.add_enabled(
-                        !busy,
+                        !busy && !keyring_busy,
                         egui::TextEdit::singleline(&mut *self.password)
                             .password(true)
                             .desired_width(240.0),
                     );
                 });
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(
+                        !busy && !keyring_busy && valid(&self.account, &self.password, &self.country, &self.dialing_code),
+                        egui::Button::new("Save ANRAN account to Linux keyring"),
+                    ).clicked() {
+                        self.save_keyring();
+                    }
+                    if ui.add_enabled(!busy && !keyring_busy, egui::Button::new("Forget saved ANRAN account")).clicked() {
+                        self.delete_keyring();
+                    }
+                });
+                ui.small("Save once to restore account fields next time. Requires secret-tool (libsecret) and unlocked Linux keyring; no Ocularium password files.");
+                if let Some(message) = self.keyring_message {
+                    ui.label(message);
+                }
                 ui.add_enabled_ui(!busy, |ui| {
                     ui.checkbox(
                         &mut self.inspect_platform,
@@ -353,7 +495,7 @@ impl AnranPanel {
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(
-                            self.ready(),
+                            self.ready() && !keyring_busy,
                             egui::Button::new("Connect once and count devices"),
                         )
                         .clicked()
@@ -361,7 +503,7 @@ impl AnranPanel {
                         self.start(saved_macs);
                     }
                     if ui
-                        .add_enabled(!busy, egui::Button::new("Clear credentials and result"))
+                        .add_enabled(!busy && !keyring_busy, egui::Button::new("Clear form and result (keep keyring)"))
                         .clicked()
                     {
                         self.account.clear();
@@ -414,6 +556,18 @@ impl AnranPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selecting_anran_prepares_offline_restore_without_login() {
+        let mut panel = AnranPanel::default();
+        panel.set_paired_app(PairedApp::Anran);
+        assert!(panel.keyring_restore_pending);
+        assert!(!panel.consent);
+        assert!(!panel.ready());
+        panel.set_paired_app(PairedApp::Arcctv);
+        assert!(!panel.keyring_restore_pending);
+        assert!(!panel.ready());
+    }
 
     #[test]
     fn anran_brand_never_implies_anran_app_backend() {

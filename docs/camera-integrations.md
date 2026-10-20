@@ -2,6 +2,10 @@
 
 This is technical planning, **not** a claim of working Ocularium app-account access or support for every camera.
 
+## ANRAN keyring account recall (offline)
+
+The native ANRAN form now offers opt-in storage of a single account/password and registration country/dial code through Linux Secret Service (`secret-tool` from libsecret). The secret payload travels via the subprocess standard input, not a shell, process arguments, copied reports, Ocularium registry or public Git history. The saved entry uses only static selectors `application=ocularium` and `entry=anran-v1`. On selecting the verified ANRAN app, a worker restores fields asynchronously without starting a vendor request. A user must still independently confirm app pairing, explicitly consent to possible phone logout, and click Connect for each one-shot lookup. The panel supports local deletion and fixed errors if the keyring is unavailable. Offline fixtures validate serialization/bounds and consent isolation; no real account was contacted. Before first save the user enters credentials once because old versions intentionally never stored them.
+
 ## ANRAN
 
 - Ocularium has a user-identified ANRAN camera; manufacturer branding and a mobile app name do **not** establish its protocol or cloud backend.
